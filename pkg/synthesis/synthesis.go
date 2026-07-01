@@ -101,30 +101,32 @@ func detectPermissiveDefaults(result *types.AnalysisResult) []types.Contradictio
 	}
 }
 
-// locationKey produces a unique key for a Location that avoids collisions
-// between methods with the same name on different types in the same package.
-// Format: "package.function@file:line" which is unique per source location.
-func locationKey(loc types.Location) string {
-	return fmt.Sprintf("%s.%s@%s:%d", loc.Package, loc.Function, loc.File, loc.Line)
+// functionKey produces a key identifying a function by package, name, and file
+// (without line number). This is used for cross-referencing between analysis
+// passes where the same function appears with different line numbers: auth flow
+// locations use the function definition line, while error path origins use the
+// error creation call-site line.
+func functionKey(loc types.Location) string {
+	return fmt.Sprintf("%s.%s@%s", loc.Package, loc.Function, loc.File)
 }
 
 func detectDroppedErrorsOnAuthPath(result *types.AnalysisResult) []types.Contradiction {
 	var contradictions []types.Contradiction
 
-	// Build a set of auth-related functions using location-qualified keys to
-	// avoid collisions between methods with the same name on different types.
+	// Build a set of auth-related functions keyed by package.function@file.
+	// Line numbers are excluded because auth locations use fn.Pos() (definition line)
+	// while error origins use call.Pos() (call-site line within the function).
 	authFunctions := make(map[string]bool)
 	for _, flow := range result.AuthFlows {
-		// Include entry points.
-		authFunctions[locationKey(flow.Entry)] = true
+		authFunctions[functionKey(flow.Entry)] = true
 		if flow.Authentication != nil {
-			authFunctions[locationKey(flow.Authentication.Location)] = true
+			authFunctions[functionKey(flow.Authentication.Location)] = true
 		}
 		if flow.Authorization != nil {
-			authFunctions[locationKey(flow.Authorization.Location)] = true
+			authFunctions[functionKey(flow.Authorization.Location)] = true
 		}
 		for _, v := range flow.Validators {
-			authFunctions[locationKey(v.Location)] = true
+			authFunctions[functionKey(v.Location)] = true
 		}
 	}
 
@@ -132,7 +134,7 @@ func detectDroppedErrorsOnAuthPath(result *types.AnalysisResult) []types.Contrad
 		if !ep.Dropped {
 			continue
 		}
-		funcKey := locationKey(ep.Origin)
+		funcKey := functionKey(ep.Origin)
 		if !authFunctions[funcKey] {
 			continue
 		}
