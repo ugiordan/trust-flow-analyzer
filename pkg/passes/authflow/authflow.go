@@ -1,6 +1,7 @@
 package authflow
 
 import (
+	gotypes "go/types"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -30,7 +31,6 @@ var patterns = []authPattern{
 	{"CheckAccess", "authz"},
 	{"SubjectAccessReview", "authz"},
 	{"IsAllowed", "authz"},
-	{"Matches", "authz"},
 
 	{"ValidateEmail", "validator"},
 	{"isEmailValid", "validator"},
@@ -97,7 +97,7 @@ func findAuthFunctions(prog *loader.Program) []classifiedFunc {
 	}
 
 	sort.Slice(result, func(i, j int) bool {
-		return result[i].fn.Name() < result[j].fn.Name()
+		return result[i].fn.String() < result[j].fn.String()
 	})
 
 	return result
@@ -126,22 +126,41 @@ func findEntryPoints(prog *loader.Program) []*ssa.Function {
 }
 
 func isEntryPoint(fn *ssa.Function) bool {
-	if fn.Name() == "ServeHTTP" && fn.Signature.Params().Len() == 2 {
-		return true
+	if fn.Name() == "ServeHTTP" {
+		// ServeHTTP must have a receiver (it's a method) and the correct param types.
+		if fn.Signature.Recv() == nil {
+			return false
+		}
+		if fn.Signature.Params().Len() == 2 && hasHTTPParams(fn.Signature) {
+			return true
+		}
+		return false
 	}
 	name := fn.Name()
 	if strings.HasPrefix(name, "Handle") || strings.HasPrefix(name, "handler") {
 		sig := fn.Signature
-		if sig.Params().Len() >= 2 {
-			for i := 0; i < sig.Params().Len(); i++ {
-				paramType := sig.Params().At(i).Type().String()
-				if strings.Contains(paramType, "http.ResponseWriter") || strings.Contains(paramType, "http.Request") {
-					return true
-				}
-			}
+		if sig.Params().Len() >= 2 && hasHTTPParams(sig) {
+			return true
 		}
 	}
 	return false
+}
+
+// hasHTTPParams returns true if the function signature contains http.ResponseWriter
+// and *http.Request parameters.
+func hasHTTPParams(sig *gotypes.Signature) bool {
+	hasWriter := false
+	hasRequest := false
+	for i := 0; i < sig.Params().Len(); i++ {
+		paramType := sig.Params().At(i).Type().String()
+		if strings.Contains(paramType, "http.ResponseWriter") {
+			hasWriter = true
+		}
+		if strings.Contains(paramType, "http.Request") {
+			hasRequest = true
+		}
+	}
+	return hasWriter && hasRequest
 }
 
 func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classifiedFunc) *types.AuthFlow {
@@ -176,36 +195,64 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 	flow := &types.AuthFlow{
 		Name: deriveFlowName(entry),
 		Entry: types.Location{
-			File:     relativePath(entryFile),
+			File:     relativePath(entryFile, prog.ModulePath),
 			Line:     entryLine,
 			Function: entry.Name(),
 			Package:  packagePath(entry),
 		},
 	}
 
+	// Use the first authn step as the primary, but log all steps for completeness.
+	// In the future, additional steps could be surfaced in the output.
 	if len(authnSteps) > 0 {
 		fn := authnSteps[0].fn
 		file, line := loader.FunctionLocation(prog.Fset, fn)
 		flow.Authentication = &types.AuthStep{
 			Location: types.Location{
-				File:     relativePath(file),
+				File:     relativePath(file, prog.ModulePath),
 				Line:     line,
 				Function: fn.Name(),
 				Package:  packagePath(fn),
 			},
 		}
+		// Record additional authn steps as validators so they aren't silently dropped.
+		for _, extra := range authnSteps[1:] {
+			ef, el := loader.FunctionLocation(prog.Fset, extra.fn)
+			flow.Validators = append(flow.Validators, types.ValidatorInfo{
+				Location: types.Location{
+					File:     relativePath(ef, prog.ModulePath),
+					Line:     el,
+					Function: extra.fn.Name(),
+					Package:  packagePath(extra.fn),
+				},
+				Kind: "authn",
+			})
+		}
 	}
 
+	// Use the first authz step as the primary, record extras as validators.
 	if len(authzSteps) > 0 {
 		fn := authzSteps[0].fn
 		file, line := loader.FunctionLocation(prog.Fset, fn)
 		flow.Authorization = &types.AuthStep{
 			Location: types.Location{
-				File:     relativePath(file),
+				File:     relativePath(file, prog.ModulePath),
 				Line:     line,
 				Function: fn.Name(),
 				Package:  packagePath(fn),
 			},
+		}
+		for _, extra := range authzSteps[1:] {
+			ef, el := loader.FunctionLocation(prog.Fset, extra.fn)
+			flow.Validators = append(flow.Validators, types.ValidatorInfo{
+				Location: types.Location{
+					File:     relativePath(ef, prog.ModulePath),
+					Line:     el,
+					Function: extra.fn.Name(),
+					Package:  packagePath(extra.fn),
+				},
+				Kind: "authz",
+			})
 		}
 	}
 
@@ -213,7 +260,7 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 		file, line := loader.FunctionLocation(prog.Fset, vs.fn)
 		flow.Validators = append(flow.Validators, types.ValidatorInfo{
 			Location: types.Location{
-				File:     relativePath(file),
+				File:     relativePath(file, prog.ModulePath),
 				Line:     line,
 				Function: vs.fn.Name(),
 				Package:  packagePath(vs.fn),
@@ -225,7 +272,7 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 	for _, ss := range sessionSteps {
 		file, line := loader.FunctionLocation(prog.Fset, ss.fn)
 		flow.Sessions = append(flow.Sessions, types.Location{
-			File:     relativePath(file),
+			File:     relativePath(file, prog.ModulePath),
 			Line:     line,
 			Function: ss.fn.Name(),
 			Package:  packagePath(ss.fn),
@@ -238,6 +285,8 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 }
 
 func forwardReachable(cg *callgraph.Graph, root *ssa.Function) map[*ssa.Function]bool {
+	const maxNodes = 10000
+
 	visited := make(map[*ssa.Function]bool)
 	node := cg.Nodes[root]
 	if node == nil {
@@ -246,6 +295,10 @@ func forwardReachable(cg *callgraph.Graph, root *ssa.Function) map[*ssa.Function
 
 	queue := []*callgraph.Node{node}
 	for len(queue) > 0 {
+		if len(visited) >= maxNodes {
+			break
+		}
+
 		current := queue[0]
 		queue = queue[1:]
 
@@ -292,7 +345,22 @@ func packagePath(fn *ssa.Function) string {
 	return ""
 }
 
-func relativePath(file string) string {
+// relativePath returns a path relative to the module root by splitting on the
+// module path. If the module path can't be found in the file path, falls back
+// to the base filename to avoid exposing absolute paths.
+func relativePath(file string, modulePath string) string {
+	if file == "" {
+		return ""
+	}
+	// Convert module path to filesystem path separator format.
+	modDir := filepath.FromSlash(modulePath)
+	if idx := strings.LastIndex(file, modDir); idx >= 0 {
+		rel := file[idx+len(modDir):]
+		rel = strings.TrimPrefix(rel, string(filepath.Separator))
+		if rel != "" {
+			return rel
+		}
+	}
 	return filepath.Base(file)
 }
 

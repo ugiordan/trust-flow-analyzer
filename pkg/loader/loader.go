@@ -98,6 +98,9 @@ func Load(dir string, stderr io.Writer) (*Program, error) {
 
 // FunctionLocation returns file:line for an SSA function using its position.
 func FunctionLocation(fset *token.FileSet, fn *ssa.Function) (file string, line int) {
+	if fn == nil {
+		return "", 0
+	}
 	pos := fn.Pos()
 	if !pos.IsValid() {
 		return "", 0
@@ -118,16 +121,15 @@ func SortedModuleFunctions(prog *Program) []*ssa.Function {
 		}
 	}
 	sort.Slice(fns, func(i, j int) bool {
-		pi, pj := fns[i].Package(), fns[j].Package()
-		if pi != nil && pj != nil && pi.Pkg.Path() != pj.Pkg.Path() {
-			return pi.Pkg.Path() < pj.Pkg.Path()
-		}
-		return fns[i].Name() < fns[j].Name()
+		return fns[i].String() < fns[j].String()
 	})
 	return fns
 }
 
 func readModulePath(dir string) (string, error) {
+	// NOTE: We open go.mod directly without resolving symlinks. This is acceptable
+	// because go.mod is typically a regular file in the project root, and symlink
+	// resolution would add complexity for a rare edge case.
 	gomod := filepath.Join(dir, "go.mod")
 	f, err := os.Open(gomod)
 	if err != nil {
@@ -135,8 +137,11 @@ func readModulePath(dir string) (string, error) {
 	}
 	defer f.Close()
 
+	// Limit scanning to first 100 lines. The module directive must appear near the
+	// top of go.mod; scanning further would be a sign of a malformed file.
+	const maxLines = 100
 	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
+	for lineNum := 0; scanner.Scan() && lineNum < maxLines; lineNum++ {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "module ") {
 			return strings.TrimSpace(strings.TrimPrefix(line, "module")), nil

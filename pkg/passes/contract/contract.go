@@ -22,10 +22,6 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	prog := ctx.Program
 
 	for _, fn := range loader.SortedModuleFunctions(prog) {
-		if fn.Object() == nil || !fn.Object().Exported() {
-			continue
-		}
-
 		c := analyzeContract(prog, fn)
 		if c != nil && len(c.Violations) > 0 {
 			ctx.Result.Contracts = append(ctx.Result.Contracts, *c)
@@ -110,14 +106,47 @@ func analyzeContract(prog *loader.Program, fn *ssa.Function) *ttypes.Contract {
 func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.CallInstruction, callee *ssa.Function) []ttypes.ContractViolation {
 	var violations []ttypes.ContractViolation
 
-	callValue, ok := site.(ssa.Value)
-	if !ok {
+	sig := callee.Signature
+	results := sig.Results()
+	if results == nil || results.Len() == 0 {
 		return nil
 	}
 
+	// Check if any return is an error type.
+	hasError := false
+	for i := 0; i < results.Len(); i++ {
+		if isErrorType(results.At(i).Type()) {
+			hasError = true
+			break
+		}
+	}
+	if !hasError {
+		return nil
+	}
+
+	callValue, ok := site.(ssa.Value)
+	if !ok {
+		// The call is used as a statement (return values discarded entirely).
+		// If the callee returns an error, this is an unchecked error.
+		file, line := callerLocation(prog.Fset, caller, site)
+		for i := 0; i < results.Len(); i++ {
+			if isErrorType(results.At(i).Type()) {
+				violations = append(violations, ttypes.ContractViolation{
+					Caller: ttypes.Location{
+						File:     filepath.Base(file),
+						Line:     line,
+						Function: caller.Name(),
+						Package:  packagePath(caller),
+					},
+					Description: caller.Name() + " discards all return values from " + callee.Name() + " (including error)",
+					Kind:        "UNCHECKED_ERROR",
+				})
+			}
+		}
+		return violations
+	}
+
 	extract := findExtractUsage(callValue)
-	sig := callee.Signature
-	results := sig.Results()
 
 	for i := 0; i < results.Len(); i++ {
 		r := results.At(i)
@@ -125,7 +154,7 @@ func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.Ca
 			continue
 		}
 
-		if !isExtractUsed(extract, i) {
+		if !isExtractUsed(extract, i, callValue, results.Len()) {
 			file, line := callerLocation(prog.Fset, caller, site)
 			violations = append(violations, ttypes.ContractViolation{
 				Caller: ttypes.Location{
@@ -145,12 +174,16 @@ func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.Ca
 
 func findExtractUsage(v ssa.Value) map[int]bool {
 	used := make(map[int]bool)
-	for _, ref := range *v.Referrers() {
+	refs := v.Referrers()
+	if refs == nil {
+		return used
+	}
+	for _, ref := range *refs {
 		if ext, ok := ref.(*ssa.Extract); ok {
-			refs := ext.Referrers()
-			if refs != nil && len(*refs) > 0 {
+			extRefs := ext.Referrers()
+			if extRefs != nil && len(*extRefs) > 0 {
 				isBlank := true
-				for _, r := range *refs {
+				for _, r := range *extRefs {
 					if _, ok := r.(*ssa.DebugRef); !ok {
 						isBlank = false
 						break
@@ -165,9 +198,24 @@ func findExtractUsage(v ssa.Value) map[int]bool {
 	return used
 }
 
-func isExtractUsed(extract map[int]bool, index int) bool {
+func isExtractUsed(extract map[int]bool, index int, callValue ssa.Value, resultCount int) bool {
+	// For single-return functions there is no Extract instruction.
+	// Check referrers directly on the call value.
+	if resultCount == 1 {
+		refs := callValue.Referrers()
+		if refs == nil {
+			return false
+		}
+		for _, ref := range *refs {
+			if _, ok := ref.(*ssa.DebugRef); ok {
+				continue
+			}
+			return true
+		}
+		return false
+	}
 	if len(extract) == 0 {
-		return true // can't determine, assume used
+		return false // no extracts found, error is unused
 	}
 	return extract[index]
 }

@@ -57,9 +57,9 @@ func (k *Knowledge) loadK8sSemantics() {
 	}
 	k.entries["InsecureSkipNonce"] = FieldSemantics{
 		Field:          "InsecureSkipNonce",
-		EmptyMeaning:   "Skip OIDC nonce validation (replay protection disabled)",
-		Permissiveness: "PERMISSIVE",
-		Description:    "When true, skips OIDC nonce validation allowing token replay.",
+		EmptyMeaning:   "OIDC nonce validation enabled (replay protection active)",
+		Permissiveness: "RESTRICTIVE",
+		Description:    "Zero value (false) means nonce validation is active. When set to true, skips OIDC nonce validation allowing token replay.",
 	}
 	k.entries["InsecureSkipVerify"] = FieldSemantics{
 		Field:          "InsecureSkipVerify",

@@ -46,6 +46,15 @@ func (p *Pass) analyzePackage(pkg *packages.Package, plat *platform.Knowledge, r
 }
 
 func (p *Pass) analyzeCompositeLit(lit *ast.CompositeLit, pkg *packages.Package, plat *platform.Knowledge, result *types.AnalysisResult, fset *token.FileSet) {
+	// Use TypesInfo to resolve the struct type for context-aware field matching.
+	// This avoids false positives from fields with the same name in unrelated structs.
+	structTypeName := ""
+	if pkg.TypesInfo != nil && lit.Type != nil {
+		if t := pkg.TypesInfo.TypeOf(lit.Type); t != nil {
+			structTypeName = t.String()
+		}
+	}
+
 	for _, elt := range lit.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
 		if !ok {
@@ -67,8 +76,13 @@ func (p *Pass) analyzeCompositeLit(lit *ast.CompositeLit, pkg *packages.Package,
 		value := exprToString(kv.Value)
 		isDefault := isZeroValue(kv.Value)
 
+		qualifiedField := fieldName
+		if structTypeName != "" {
+			qualifiedField = structTypeName + "." + fieldName
+		}
+
 		result.Defaults = append(result.Defaults, types.DefaultValue{
-			Field: fieldName,
+			Field: qualifiedField,
 			Location: types.Location{
 				File:    filepath.Base(pos.Filename),
 				Line:    pos.Line,
@@ -93,11 +107,23 @@ func (p *Pass) analyzeFlagCall(call *ast.CallExpr, pkg *packages.Package, plat *
 		return
 	}
 
-	if len(call.Args) < 2 {
+	// For *Var methods (e.g. StringVar, BoolVar), the first arg is a pointer,
+	// flag name is Args[1], default is Args[2]. For non-Var methods (e.g. String,
+	// Bool), flag name is Args[0], default is Args[1].
+	isVarMethod := strings.HasSuffix(methodName, "Var")
+
+	nameIdx := 0
+	defaultIdx := 1
+	if isVarMethod {
+		nameIdx = 1
+		defaultIdx = 2
+	}
+
+	if len(call.Args) <= nameIdx {
 		return
 	}
 
-	nameArg, ok := call.Args[0].(*ast.BasicLit)
+	nameArg, ok := call.Args[nameIdx].(*ast.BasicLit)
 	if !ok || nameArg.Kind != token.STRING {
 		return
 	}
@@ -109,8 +135,8 @@ func (p *Pass) analyzeFlagCall(call *ast.CallExpr, pkg *packages.Package, plat *
 	}
 
 	defaultValue := ""
-	if len(call.Args) >= 3 {
-		defaultValue = exprToString(call.Args[1])
+	if len(call.Args) > defaultIdx {
+		defaultValue = exprToString(call.Args[defaultIdx])
 	}
 
 	pos := fset.Position(call.Pos())
@@ -155,7 +181,7 @@ func exprToString(expr ast.Expr) string {
 		}
 		return "[...]"
 	case *ast.UnaryExpr:
-		return exprToString(e.X)
+		return e.Op.String() + exprToString(e.X)
 	default:
 		return "<complex>"
 	}

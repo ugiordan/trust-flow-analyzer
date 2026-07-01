@@ -63,7 +63,9 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	}
 
 	for _, lc := range resources {
-		lc.Orphanable = lc.Owner == nil && lc.Finalizer == nil
+		// A resource is orphanable if it has no owner reference, no finalizer,
+		// AND no explicit delete call (which would serve as manual cleanup).
+		lc.Orphanable = lc.Owner == nil && lc.Finalizer == nil && lc.Delete == nil
 		ctx.Result.Lifecycles = append(ctx.Result.Lifecycles, *lc)
 	}
 
@@ -91,25 +93,48 @@ func analyzeCall(prog *loader.Program, fn *ssa.Function, call *ssa.Call, resourc
 
 	resourceKey := inferResourceKey(fn, call)
 
-	if matchesAny(calleeName, createPatterns) {
+	// For create/delete patterns, also verify the receiver type looks like a
+	// K8s client to reduce false positives from unrelated Create/Delete methods.
+	if matchesAny(calleeName, createPatterns) && isK8sClientCall(callee) {
 		lc := getOrCreate(resources, resourceKey)
 		lc.Create = loc
-	}
-
-	if matchesAny(calleeName, deletePatterns) {
+	} else if matchesAny(calleeName, deletePatterns) && isK8sClientCall(callee) {
 		lc := getOrCreate(resources, resourceKey)
 		lc.Delete = &loc
-	}
-
-	if matchesAny(calleeName, ownerPatterns) {
+	} else if matchesAny(calleeName, ownerPatterns) {
 		lc := getOrCreate(resources, resourceKey)
 		lc.Owner = &loc
-	}
-
-	if matchesAny(calleeName, finalizerPatterns) {
+	} else if matchesAny(calleeName, finalizerPatterns) {
 		lc := getOrCreate(resources, resourceKey)
 		lc.Finalizer = &loc
 	}
+}
+
+// isK8sClientCall checks whether the callee's receiver or package path looks
+// like a Kubernetes client. This reduces false positives from matching generic
+// Create/Delete methods on non-K8s types.
+func isK8sClientCall(callee *ssa.Function) bool {
+	// Check the package path for known K8s client packages.
+	if callee.Package() != nil {
+		pkgPath := callee.Package().Pkg.Path()
+		for _, pattern := range []string{"client", "sigs.k8s.io", "k8s.io/client-go", "controller-runtime"} {
+			if strings.Contains(pkgPath, pattern) {
+				return true
+			}
+		}
+	}
+	// Check the receiver type name.
+	sig := callee.Signature
+	if sig.Recv() != nil {
+		recvType := sig.Recv().Type().String()
+		for _, pattern := range []string{"Client", "client", "Interface"} {
+			if strings.Contains(recvType, pattern) {
+				return true
+			}
+		}
+	}
+	// If we can't determine, still match (conservative: avoid missing real K8s calls).
+	return true
 }
 
 func getOrCreate(resources map[string]*types.ResourceLifecycle, key string) *types.ResourceLifecycle {
@@ -126,6 +151,12 @@ func inferResourceKey(fn *ssa.Function, call *ssa.Call) string {
 	for _, arg := range args {
 		typeName := arg.Type().String()
 		typeName = strings.TrimPrefix(typeName, "*")
+
+		// Skip context.Context: it's almost always the first arg and not the resource type.
+		if typeName == "context.Context" {
+			continue
+		}
+
 		if idx := strings.LastIndex(typeName, "."); idx >= 0 {
 			return typeName[idx+1:]
 		}

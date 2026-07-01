@@ -97,7 +97,7 @@ func isErrorCreation(call *ssa.Call) bool {
 
 	fullName := callee.String()
 	for _, creator := range errorCreators {
-		if strings.HasSuffix(fullName, creator) || strings.Contains(fullName, creator) {
+		if strings.Contains(fullName, creator) {
 			return true
 		}
 	}
@@ -143,17 +143,58 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 			if subRefs == nil || len(*subRefs) == 0 {
 				handlers = append(handlers, ttypes.ErrorHandler{Location: loc, Kind: "DROP"})
 			} else {
+				// Trace through Extract one level to see if the extracted value is used.
+				extractUsed := false
 				for _, subRef := range *subRefs {
 					if _, ok := subRef.(*ssa.DebugRef); ok {
 						continue
 					}
+					extractUsed = true
+					// Trace one level through calls on extracted values.
+					if subCall, ok := subRef.(*ssa.Call); ok {
+						callee := subCall.Call.StaticCallee()
+						if callee != nil && isLoggingFunction(callee.Name()) {
+							subPos := prog.Fset.Position(subCall.Pos())
+							handlers = append(handlers, ttypes.ErrorHandler{
+								Location: ttypes.Location{
+									File:     filepath.Base(subPos.Filename),
+									Line:     subPos.Line,
+									Function: fn.Name(),
+									Package:  packagePath(fn),
+								},
+								Kind: "LOG",
+							})
+						}
+					}
+				}
+				if extractUsed {
 					dropped = false
-					break
 				}
 			}
 
 		case *ssa.Store:
+			// Trace one level through Store: check if the stored value is later loaded and used.
 			dropped = false
+			storeAddr := r.Addr
+			if storeAddr != nil {
+				addrRefs := storeAddr.Referrers()
+				if addrRefs != nil {
+					for _, addrRef := range *addrRefs {
+						if ret, ok := addrRef.(*ssa.Return); ok {
+							retPos := prog.Fset.Position(ret.Pos())
+							handlers = append(handlers, ttypes.ErrorHandler{
+								Location: ttypes.Location{
+									File:     filepath.Base(retPos.Filename),
+									Line:     retPos.Line,
+									Function: fn.Name(),
+									Package:  packagePath(fn),
+								},
+								Kind: "RETURN",
+							})
+						}
+					}
+				}
+			}
 
 		case *ssa.Phi:
 			dropped = false
@@ -166,14 +207,23 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 	return handlers, dropped
 }
 
+// knownLogFunctions is the exact set of recognized logging function names.
+// Using exact matches avoids false positives from prefix matching (e.g.
+// "Error" the method vs "Errorf" the logger).
+var knownLogFunctions = map[string]bool{
+	// Standard log package
+	"Printf": true, "Println": true, "Print": true,
+	"Fatalf": true, "Fatalln": true, "Fatal": true,
+	// Structured loggers (logr, zap, zerolog, slog)
+	"Info": true, "Infof": true, "Infow": true,
+	"Error": true, "Errorf": true, "Errorw": true,
+	"Warn": true, "Warnf": true, "Warnw": true,
+	"Debug": true, "Debugf": true, "Debugw": true,
+	"Log": true, "WithError": true,
+}
+
 func isLoggingFunction(name string) bool {
-	lower := strings.ToLower(name)
-	for _, prefix := range []string{"log", "error", "warn", "info", "debug", "fatal", "print"} {
-		if strings.HasPrefix(lower, prefix) {
-			return true
-		}
-	}
-	return false
+	return knownLogFunctions[name]
 }
 
 func isWrappingFunction(name string) bool {
@@ -181,16 +231,20 @@ func isWrappingFunction(name string) bool {
 	return strings.Contains(lower, "wrap") || strings.Contains(lower, "errorf")
 }
 
-func inferFailMode(_ *ssa.Function, block *ssa.BasicBlock, dropped bool) string {
+func inferFailMode(fn *ssa.Function, _ *ssa.BasicBlock, dropped bool) string {
 	if dropped {
 		return "OPEN"
 	}
 
-	for _, instr := range block.Instrs {
-		if ret, ok := instr.(*ssa.Return); ok {
-			for _, result := range ret.Results {
-				if isNilValue(result) {
-					return "OPEN"
+	// Check all blocks in the function for return statements that return nil
+	// values alongside errors, which indicates a fail-open pattern.
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			if ret, ok := instr.(*ssa.Return); ok {
+				for _, result := range ret.Results {
+					if isNilValue(result) {
+						return "OPEN"
+					}
 				}
 			}
 		}

@@ -128,7 +128,7 @@ func writeDefaults(p *printer, defaults []types.DefaultValue) {
 		if meaning == "" {
 			meaning = "(unknown)"
 		}
-		p.line("| %s | %s | %s | %s |", d.Field, lib, op, meaning)
+		p.line("| %s | %s | %s | %s |", escapePipe(d.Field), escapePipe(lib), escapePipe(op), escapePipe(meaning))
 	}
 	p.blank()
 }
@@ -167,10 +167,6 @@ func writeErrorPaths(p *printer, paths []types.ErrorPath) {
 	p.blank()
 
 	for _, ep := range paths {
-		if !ep.Dropped && ep.FailMode != "OPEN" {
-			continue
-		}
-
 		p.line("### %s:%s (line %d)", ep.Origin.File, ep.Origin.Function, ep.Origin.Line)
 		p.line("Status: %s", errorStatus(ep))
 		p.line("Fail mode: %s", ep.FailMode)
@@ -260,6 +256,11 @@ func formatReturns(returns []types.ReturnInfo) string {
 		parts = append(parts, desc)
 	}
 	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+// escapePipe escapes pipe characters in markdown table cell content.
+func escapePipe(s string) string {
+	return strings.ReplaceAll(s, "|", "\\|")
 }
 
 func errorStatus(ep types.ErrorPath) string {

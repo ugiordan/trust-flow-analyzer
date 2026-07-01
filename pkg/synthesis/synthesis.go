@@ -18,13 +18,19 @@ func Synthesize(result *types.AnalysisResult) {
 	contradictions = append(contradictions, detectDroppedErrorsOnAuthPath(result)...)
 	contradictions = append(contradictions, detectOrphanedResources(result)...)
 
+	// Sort by severity (HIGH > MEDIUM > LOW) then title for stable ordering,
+	// then assign IDs so they are deterministic regardless of detection order.
+	sort.Slice(contradictions, func(i, j int) bool {
+		si, sj := severityRank(contradictions[i].Severity), severityRank(contradictions[j].Severity)
+		if si != sj {
+			return si < sj
+		}
+		return contradictions[i].Title < contradictions[j].Title
+	})
+
 	for i := range contradictions {
 		contradictions[i].ID = fmt.Sprintf("CONTRADICTION-%03d", i+1)
 	}
-
-	sort.Slice(contradictions, func(i, j int) bool {
-		return contradictions[i].ID < contradictions[j].ID
-	})
 
 	result.Contradictions = contradictions
 }
@@ -41,6 +47,8 @@ func detectAuthWithoutAuthz(result *types.AnalysisResult) []types.Contradiction 
 			continue
 		}
 
+		// PERMISSIVE posture means authentication exists but authorization does not.
+		// No need to check flow.Authorization here since it is always nil for this posture.
 		assumptions := []types.Assumption{
 			{
 				Location:    flow.Authentication.Location,
@@ -48,15 +56,8 @@ func detectAuthWithoutAuthz(result *types.AnalysisResult) []types.Contradiction 
 			},
 			{
 				Location:    flow.Entry,
-				Description: flow.Entry.Function + " assumes downstream authorization exists",
+				Description: flow.Entry.Function + " has no authorization gate after authentication",
 			},
-		}
-
-		if flow.Authorization != nil {
-			assumptions = append(assumptions, types.Assumption{
-				Location:    flow.Authorization.Location,
-				Description: flow.Authorization.Location.Function + " authorization gate exists but may be permissive by default",
-			})
 		}
 
 		contradictions = append(contradictions, types.Contradiction{
@@ -103,13 +104,19 @@ func detectPermissiveDefaults(result *types.AnalysisResult) []types.Contradictio
 func detectDroppedErrorsOnAuthPath(result *types.AnalysisResult) []types.Contradiction {
 	var contradictions []types.Contradiction
 
-	authPackages := make(map[string]bool)
+	// Build a set of auth-related functions (not just packages) for precise matching.
+	authFunctions := make(map[string]bool) // key: "package.function"
 	for _, flow := range result.AuthFlows {
+		// Include entry points.
+		authFunctions[flow.Entry.Package+"."+flow.Entry.Function] = true
 		if flow.Authentication != nil {
-			authPackages[flow.Authentication.Location.Package] = true
+			authFunctions[flow.Authentication.Location.Package+"."+flow.Authentication.Location.Function] = true
 		}
 		if flow.Authorization != nil {
-			authPackages[flow.Authorization.Location.Package] = true
+			authFunctions[flow.Authorization.Location.Package+"."+flow.Authorization.Location.Function] = true
+		}
+		for _, v := range flow.Validators {
+			authFunctions[v.Location.Package+"."+v.Location.Function] = true
 		}
 	}
 
@@ -117,7 +124,8 @@ func detectDroppedErrorsOnAuthPath(result *types.AnalysisResult) []types.Contrad
 		if !ep.Dropped {
 			continue
 		}
-		if !authPackages[ep.Origin.Package] {
+		funcKey := ep.Origin.Package + "." + ep.Origin.Function
+		if !authFunctions[funcKey] {
 			continue
 		}
 
@@ -135,6 +143,19 @@ func detectDroppedErrorsOnAuthPath(result *types.AnalysisResult) []types.Contrad
 	}
 
 	return contradictions
+}
+
+func severityRank(s string) int {
+	switch s {
+	case "HIGH":
+		return 0
+	case "MEDIUM":
+		return 1
+	case "LOW":
+		return 2
+	default:
+		return 3
+	}
 }
 
 func detectOrphanedResources(result *types.AnalysisResult) []types.Contradiction {
