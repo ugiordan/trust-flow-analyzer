@@ -1,7 +1,6 @@
 package lifecycle
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -85,7 +84,7 @@ func analyzeCall(prog *loader.Program, fn *ssa.Function, call *ssa.Call, resourc
 	calleeName := callee.Name()
 	pos := prog.Fset.Position(call.Pos())
 	loc := types.Location{
-		File:     filepath.Base(pos.Filename),
+		File:     loader.RelativePath(pos.Filename, prog.ModulePath),
 		Line:     pos.Line,
 		Function: fn.Name(),
 		Package:  packagePath(fn),
@@ -97,7 +96,7 @@ func analyzeCall(prog *loader.Program, fn *ssa.Function, call *ssa.Call, resourc
 	// K8s client to reduce false positives from unrelated Create/Delete methods.
 	if matchesAny(calleeName, createPatterns) && isK8sClientCall(callee) {
 		lc := getOrCreate(resources, resourceKey)
-		lc.Create = loc
+		lc.Create = &loc
 	} else if matchesAny(calleeName, deletePatterns) && isK8sClientCall(callee) {
 		lc := getOrCreate(resources, resourceKey)
 		lc.Delete = &loc
@@ -114,27 +113,30 @@ func analyzeCall(prog *loader.Program, fn *ssa.Function, call *ssa.Call, resourc
 // like a Kubernetes client. This reduces false positives from matching generic
 // Create/Delete methods on non-K8s types.
 func isK8sClientCall(callee *ssa.Function) bool {
-	// Check the package path for known K8s client packages.
+	// Check the package path for known K8s client packages. Only match specific
+	// K8s package paths to avoid false positives from unrelated packages that
+	// happen to contain "client" in their path.
 	if callee.Package() != nil {
 		pkgPath := callee.Package().Pkg.Path()
-		for _, pattern := range []string{"client", "sigs.k8s.io", "k8s.io/client-go", "controller-runtime"} {
+		for _, pattern := range []string{"sigs.k8s.io", "k8s.io/client-go", "controller-runtime"} {
 			if strings.Contains(pkgPath, pattern) {
 				return true
 			}
 		}
 	}
-	// Check the receiver type name.
+	// Check the receiver type name for K8s client interfaces.
 	sig := callee.Signature
 	if sig.Recv() != nil {
 		recvType := sig.Recv().Type().String()
-		for _, pattern := range []string{"Client", "client", "Interface"} {
+		for _, pattern := range []string{"Client", "Interface"} {
 			if strings.Contains(recvType, pattern) {
 				return true
 			}
 		}
 	}
-	// If we can't determine, still match (conservative: avoid missing real K8s calls).
-	return true
+	// If we can't determine the package or receiver, default to false to avoid
+	// false positives from unrelated Create/Delete methods.
+	return false
 }
 
 func getOrCreate(resources map[string]*types.ResourceLifecycle, key string) *types.ResourceLifecycle {
@@ -146,6 +148,11 @@ func getOrCreate(resources map[string]*types.ResourceLifecycle, key string) *typ
 	return lc
 }
 
+// inferResourceKey extracts the resource type name from call arguments.
+// Known limitation (v1): when the argument is an interface type (e.g.
+// client.Object), this returns the interface name rather than the concrete
+// type. Resolving concrete types would require dataflow analysis through
+// MakeInterface instructions, which is planned for a future version.
 func inferResourceKey(fn *ssa.Function, call *ssa.Call) string {
 	args := call.Call.Args
 	for _, arg := range args {
@@ -155,6 +162,20 @@ func inferResourceKey(fn *ssa.Function, call *ssa.Call) string {
 		// Skip context.Context: it's almost always the first arg and not the resource type.
 		if typeName == "context.Context" {
 			continue
+		}
+
+		// Try to extract concrete type from MakeInterface instructions.
+		// This handles the common case where an interface arg was constructed
+		// from a concrete type in the same block.
+		if mi, ok := arg.(*ssa.MakeInterface); ok {
+			concrete := mi.X.Type().String()
+			concrete = strings.TrimPrefix(concrete, "*")
+			if idx := strings.LastIndex(concrete, "."); idx >= 0 {
+				return concrete[idx+1:]
+			}
+			if concrete != "" {
+				return concrete
+			}
 		}
 
 		if idx := strings.LastIndex(typeName, "."); idx >= 0 {

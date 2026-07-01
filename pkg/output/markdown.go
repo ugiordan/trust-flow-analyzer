@@ -187,7 +187,11 @@ func writeLifecycles(p *printer, lifecycles []types.ResourceLifecycle) {
 
 	for _, lc := range lifecycles {
 		p.line("### %s", lc.Resource)
-		p.line("Create: %s:%s (line %d)", lc.Create.File, lc.Create.Function, lc.Create.Line)
+		if lc.Create != nil {
+			p.line("Create: %s:%s (line %d)", lc.Create.File, lc.Create.Function, lc.Create.Line)
+		} else {
+			p.line("Create: NONE")
+		}
 
 		if lc.Delete != nil {
 			p.line("Delete: %s:%s (line %d)", lc.Delete.File, lc.Delete.Function, lc.Delete.Line)

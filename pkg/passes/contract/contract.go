@@ -3,7 +3,6 @@ package contract
 import (
 	"go/token"
 	"go/types"
-	"path/filepath"
 	"sort"
 
 	"golang.org/x/tools/go/ssa"
@@ -71,7 +70,7 @@ func analyzeContract(prog *loader.Program, fn *ssa.Function) *ttypes.Contract {
 	file, line := loader.FunctionLocation(prog.Fset, fn)
 	contract := &ttypes.Contract{
 		Function: ttypes.Location{
-			File:     filepath.Base(file),
+			File:     loader.RelativePath(file, prog.ModulePath),
 			Line:     line,
 			Function: fn.Name(),
 			Package:  packagePath(fn),
@@ -96,14 +95,14 @@ func analyzeContract(prog *loader.Program, fn *ssa.Function) *ttypes.Contract {
 			continue
 		}
 
-		violations := checkCallerHandling(prog, callerFn, edge.Site, fn)
+		violations := checkCallerHandling(prog, callerFn, edge.Site, fn, prog.ModulePath)
 		contract.Violations = append(contract.Violations, violations...)
 	}
 
 	return contract
 }
 
-func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.CallInstruction, callee *ssa.Function) []ttypes.ContractViolation {
+func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.CallInstruction, callee *ssa.Function, modulePath string) []ttypes.ContractViolation {
 	var violations []ttypes.ContractViolation
 
 	sig := callee.Signature
@@ -133,7 +132,7 @@ func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.Ca
 			if isErrorType(results.At(i).Type()) {
 				violations = append(violations, ttypes.ContractViolation{
 					Caller: ttypes.Location{
-						File:     filepath.Base(file),
+						File:     loader.RelativePath(file, modulePath),
 						Line:     line,
 						Function: caller.Name(),
 						Package:  packagePath(caller),
@@ -158,7 +157,7 @@ func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.Ca
 			file, line := callerLocation(prog.Fset, caller, site)
 			violations = append(violations, ttypes.ContractViolation{
 				Caller: ttypes.Location{
-					File:     filepath.Base(file),
+					File:     loader.RelativePath(file, modulePath),
 					Line:     line,
 					Function: caller.Name(),
 					Package:  packagePath(caller),

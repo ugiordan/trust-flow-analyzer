@@ -90,7 +90,7 @@ type ErrorHandler struct {
 // ResourceLifecycle traces a Kubernetes resource from creation to cleanup.
 type ResourceLifecycle struct {
 	Resource   string
-	Create     Location
+	Create     *Location
 	Delete     *Location
 	Owner      *Location
 	Finalizer  *Location

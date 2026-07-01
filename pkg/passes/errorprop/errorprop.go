@@ -1,7 +1,6 @@
 package errorprop
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -12,13 +11,19 @@ import (
 	ttypes "github.com/ugiordan/trust-flow-analyzer/pkg/types"
 )
 
-var errorCreators = []string{
-	"errors.New",
-	"fmt.Errorf",
-	"errors.Wrap",
-	"errors.Wrapf",
-	"errors.WithStack",
-	"errors.WithMessage",
+// errorCreator pairs a package path suffix with the exact function name for precise matching.
+type errorCreator struct {
+	pkgSuffix string
+	funcName  string
+}
+
+var errorCreators = []errorCreator{
+	{"errors", "New"},
+	{"fmt", "Errorf"},
+	{"errors", "Wrap"},
+	{"errors", "Wrapf"},
+	{"errors", "WithStack"},
+	{"errors", "WithMessage"},
 }
 
 // Pass implements the error propagation analysis.
@@ -68,7 +73,7 @@ func analyzeErrorPaths(prog *loader.Program, fn *ssa.Function) []ttypes.ErrorPat
 
 			pos := prog.Fset.Position(call.Pos())
 			origin := ttypes.Location{
-				File:     filepath.Base(pos.Filename),
+				File:     loader.RelativePath(pos.Filename, prog.ModulePath),
 				Line:     pos.Line,
 				Function: fn.Name(),
 				Package:  packagePath(fn),
@@ -80,7 +85,7 @@ func analyzeErrorPaths(prog *loader.Program, fn *ssa.Function) []ttypes.ErrorPat
 				Origin:   origin,
 				Handlers: handlers,
 				Dropped:  dropped,
-				FailMode: inferFailMode(fn, block, dropped),
+				FailMode: inferFailMode(dropped),
 			}
 			paths = append(paths, path)
 		}
@@ -95,9 +100,14 @@ func isErrorCreation(call *ssa.Call) bool {
 		return false
 	}
 
-	fullName := callee.String()
+	calleeName := callee.Name()
+	calleePkg := ""
+	if callee.Package() != nil {
+		calleePkg = callee.Package().Pkg.Path()
+	}
+
 	for _, creator := range errorCreators {
-		if strings.Contains(fullName, creator) {
+		if calleeName == creator.funcName && strings.HasSuffix(calleePkg, creator.pkgSuffix) {
 			return true
 		}
 	}
@@ -117,7 +127,7 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 	for _, ref := range *refs {
 		pos := prog.Fset.Position(ref.Pos())
 		loc := ttypes.Location{
-			File:     filepath.Base(pos.Filename),
+			File:     loader.RelativePath(pos.Filename, prog.ModulePath),
 			Line:     pos.Line,
 			Function: fn.Name(),
 			Package:  packagePath(fn),
@@ -135,6 +145,11 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 				dropped = false
 			} else if callee != nil && isWrappingFunction(callee.Name()) {
 				handlers = append(handlers, ttypes.ErrorHandler{Location: loc, Kind: "WRAP"})
+				dropped = false
+			} else {
+				// The error is passed as an argument to some function (even if we
+				// don't recognize it as logging/wrapping). This means the error is
+				// not silently dropped; the callee is responsible for it.
 				dropped = false
 			}
 
@@ -157,7 +172,7 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 							subPos := prog.Fset.Position(subCall.Pos())
 							handlers = append(handlers, ttypes.ErrorHandler{
 								Location: ttypes.Location{
-									File:     filepath.Base(subPos.Filename),
+									File:     loader.RelativePath(subPos.Filename, prog.ModulePath),
 									Line:     subPos.Line,
 									Function: fn.Name(),
 									Package:  packagePath(fn),
@@ -173,7 +188,8 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 			}
 
 		case *ssa.Store:
-			// Trace one level through Store: check if the stored value is later loaded and used.
+			// Store means the error is being persisted somewhere (assigned to a
+			// variable, struct field, etc.). This counts as handling.
 			dropped = false
 			storeAddr := r.Addr
 			if storeAddr != nil {
@@ -184,7 +200,7 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 							retPos := prog.Fset.Position(ret.Pos())
 							handlers = append(handlers, ttypes.ErrorHandler{
 								Location: ttypes.Location{
-									File:     filepath.Base(retPos.Filename),
+									File:     loader.RelativePath(retPos.Filename, prog.ModulePath),
 									Line:     retPos.Line,
 									Function: fn.Name(),
 									Package:  packagePath(fn),
@@ -226,38 +242,29 @@ func isLoggingFunction(name string) bool {
 	return knownLogFunctions[name]
 }
 
-func isWrappingFunction(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.Contains(lower, "wrap") || strings.Contains(lower, "errorf")
+// knownWrappingFunctions is the exact set of recognized error wrapping function names.
+// Using exact matches avoids false positives (e.g. "Unwrap" matching "wrap" substring).
+var knownWrappingFunctions = map[string]bool{
+	"Wrap":        true,
+	"Wrapf":       true,
+	"WithMessage": true,
+	"WithStack":   true,
+	"Errorf":      true,
 }
 
-func inferFailMode(fn *ssa.Function, _ *ssa.BasicBlock, dropped bool) string {
+func isWrappingFunction(name string) bool {
+	return knownWrappingFunctions[name]
+}
+
+// inferFailMode determines whether a dropped error leads to fail-open or fail-closed behavior.
+// If the error is dropped (not returned, logged, or wrapped), the function continues
+// executing past the error point, which is fail-open. If the error is handled
+// (returned, logged, wrapped), the caller has the opportunity to react, which is fail-closed.
+func inferFailMode(dropped bool) string {
 	if dropped {
 		return "OPEN"
 	}
-
-	// Check all blocks in the function for return statements that return nil
-	// values alongside errors, which indicates a fail-open pattern.
-	for _, block := range fn.Blocks {
-		for _, instr := range block.Instrs {
-			if ret, ok := instr.(*ssa.Return); ok {
-				for _, result := range ret.Results {
-					if isNilValue(result) {
-						return "OPEN"
-					}
-				}
-			}
-		}
-	}
-
 	return "CLOSED"
-}
-
-func isNilValue(v ssa.Value) bool {
-	if c, ok := v.(*ssa.Const); ok {
-		return c.IsNil()
-	}
-	return false
 }
 
 func packagePath(fn *ssa.Function) string {

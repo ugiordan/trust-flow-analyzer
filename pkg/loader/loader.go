@@ -144,10 +144,39 @@ func readModulePath(dir string) (string, error) {
 	for lineNum := 0; scanner.Scan() && lineNum < maxLines; lineNum++ {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module")), nil
+			modPath := strings.TrimSpace(strings.TrimPrefix(line, "module"))
+			// Strip inline comments (e.g. "module example.com/foo // some comment").
+			if idx := strings.Index(modPath, "//"); idx >= 0 {
+				modPath = strings.TrimSpace(modPath[:idx])
+			}
+			return modPath, nil
 		}
 	}
 	return "", fmt.Errorf("module directive not found in go.mod")
+}
+
+// RelativePath returns a path relative to the module root by splitting on the
+// module path. If the module path can't be found in the file path, falls back
+// to the base filename to avoid exposing absolute paths.
+func RelativePath(file string, modulePath string) string {
+	if file == "" {
+		return ""
+	}
+	// Convert module path to filesystem path separator format.
+	modDir := filepath.FromSlash(modulePath)
+	if idx := strings.LastIndex(file, modDir); idx >= 0 {
+		// Verify the character before the match is a path separator (or start of string)
+		// to avoid matching inside longer directory names (e.g. "mymodule" matching "module").
+		if idx > 0 && file[idx-1] != filepath.Separator {
+			return filepath.Base(file)
+		}
+		rel := file[idx+len(modDir):]
+		rel = strings.TrimPrefix(rel, string(filepath.Separator))
+		if rel != "" {
+			return rel
+		}
+	}
+	return filepath.Base(file)
 }
 
 func allErrors(pkgs []*packages.Package) bool {

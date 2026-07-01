@@ -2,7 +2,6 @@ package authflow
 
 import (
 	gotypes "go/types"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -195,7 +194,7 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 	flow := &types.AuthFlow{
 		Name: deriveFlowName(entry),
 		Entry: types.Location{
-			File:     relativePath(entryFile, prog.ModulePath),
+			File:     loader.RelativePath(entryFile, prog.ModulePath),
 			Line:     entryLine,
 			Function: entry.Name(),
 			Package:  packagePath(entry),
@@ -209,7 +208,7 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 		file, line := loader.FunctionLocation(prog.Fset, fn)
 		flow.Authentication = &types.AuthStep{
 			Location: types.Location{
-				File:     relativePath(file, prog.ModulePath),
+				File:     loader.RelativePath(file, prog.ModulePath),
 				Line:     line,
 				Function: fn.Name(),
 				Package:  packagePath(fn),
@@ -220,7 +219,7 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 			ef, el := loader.FunctionLocation(prog.Fset, extra.fn)
 			flow.Validators = append(flow.Validators, types.ValidatorInfo{
 				Location: types.Location{
-					File:     relativePath(ef, prog.ModulePath),
+					File:     loader.RelativePath(ef, prog.ModulePath),
 					Line:     el,
 					Function: extra.fn.Name(),
 					Package:  packagePath(extra.fn),
@@ -236,7 +235,7 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 		file, line := loader.FunctionLocation(prog.Fset, fn)
 		flow.Authorization = &types.AuthStep{
 			Location: types.Location{
-				File:     relativePath(file, prog.ModulePath),
+				File:     loader.RelativePath(file, prog.ModulePath),
 				Line:     line,
 				Function: fn.Name(),
 				Package:  packagePath(fn),
@@ -246,7 +245,7 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 			ef, el := loader.FunctionLocation(prog.Fset, extra.fn)
 			flow.Validators = append(flow.Validators, types.ValidatorInfo{
 				Location: types.Location{
-					File:     relativePath(ef, prog.ModulePath),
+					File:     loader.RelativePath(ef, prog.ModulePath),
 					Line:     el,
 					Function: extra.fn.Name(),
 					Package:  packagePath(extra.fn),
@@ -260,7 +259,7 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 		file, line := loader.FunctionLocation(prog.Fset, vs.fn)
 		flow.Validators = append(flow.Validators, types.ValidatorInfo{
 			Location: types.Location{
-				File:     relativePath(file, prog.ModulePath),
+				File:     loader.RelativePath(file, prog.ModulePath),
 				Line:     line,
 				Function: vs.fn.Name(),
 				Package:  packagePath(vs.fn),
@@ -272,7 +271,7 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 	for _, ss := range sessionSteps {
 		file, line := loader.FunctionLocation(prog.Fset, ss.fn)
 		flow.Sessions = append(flow.Sessions, types.Location{
-			File:     relativePath(file, prog.ModulePath),
+			File:     loader.RelativePath(file, prog.ModulePath),
 			Line:     line,
 			Function: ss.fn.Name(),
 			Package:  packagePath(ss.fn),
@@ -345,25 +344,6 @@ func packagePath(fn *ssa.Function) string {
 	return ""
 }
 
-// relativePath returns a path relative to the module root by splitting on the
-// module path. If the module path can't be found in the file path, falls back
-// to the base filename to avoid exposing absolute paths.
-func relativePath(file string, modulePath string) string {
-	if file == "" {
-		return ""
-	}
-	// Convert module path to filesystem path separator format.
-	modDir := filepath.FromSlash(modulePath)
-	if idx := strings.LastIndex(file, modDir); idx >= 0 {
-		rel := file[idx+len(modDir):]
-		rel = strings.TrimPrefix(rel, string(filepath.Separator))
-		if rel != "" {
-			return rel
-		}
-	}
-	return filepath.Base(file)
-}
-
 func inferValidatorKind(name string) string {
 	lower := strings.ToLower(name)
 	switch {
@@ -389,9 +369,10 @@ func determinePosture(flow *types.AuthFlow) string {
 		return "RESTRICTIVE"
 	case hasAuthn && !hasAuthz:
 		return "PERMISSIVE"
-	case !hasAuthn && hasAuthz:
-		return "PARTIAL"
 	default:
-		return "UNKNOWN"
+		// !hasAuthn && hasAuthz: authorization without authentication.
+		// The !hasAuthn && !hasAuthz case cannot occur because traceAuthFlow
+		// returns nil when neither authn nor authz steps are found.
+		return "PARTIAL"
 	}
 }

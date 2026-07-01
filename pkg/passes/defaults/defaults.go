@@ -3,12 +3,12 @@ package defaults
 import (
 	"go/ast"
 	"go/token"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/platform"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/types"
@@ -21,7 +21,7 @@ func (p *Pass) Name() string { return "defaults" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
 	for _, pkg := range ctx.Program.Packages {
-		p.analyzePackage(pkg, ctx.Platform, ctx.Result, ctx.Program.Fset)
+		p.analyzePackage(pkg, ctx.Platform, ctx.Result, ctx.Program.Fset, ctx.Program.ModulePath)
 	}
 
 	sort.Slice(ctx.Result.Defaults, func(i, j int) bool {
@@ -31,21 +31,21 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	return nil
 }
 
-func (p *Pass) analyzePackage(pkg *packages.Package, plat *platform.Knowledge, result *types.AnalysisResult, fset *token.FileSet) {
+func (p *Pass) analyzePackage(pkg *packages.Package, plat *platform.Knowledge, result *types.AnalysisResult, fset *token.FileSet, modulePath string) {
 	for _, file := range pkg.Syntax {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.CompositeLit:
-				p.analyzeCompositeLit(node, pkg, plat, result, fset)
+				p.analyzeCompositeLit(node, pkg, plat, result, fset, modulePath)
 			case *ast.CallExpr:
-				p.analyzeFlagCall(node, pkg, plat, result, fset)
+				p.analyzeFlagCall(node, pkg, plat, result, fset, modulePath)
 			}
 			return true
 		})
 	}
 }
 
-func (p *Pass) analyzeCompositeLit(lit *ast.CompositeLit, pkg *packages.Package, plat *platform.Knowledge, result *types.AnalysisResult, fset *token.FileSet) {
+func (p *Pass) analyzeCompositeLit(lit *ast.CompositeLit, pkg *packages.Package, plat *platform.Knowledge, result *types.AnalysisResult, fset *token.FileSet, modulePath string) {
 	// Use TypesInfo to resolve the struct type for context-aware field matching.
 	// This avoids false positives from fields with the same name in unrelated structs.
 	structTypeName := ""
@@ -67,7 +67,17 @@ func (p *Pass) analyzeCompositeLit(lit *ast.CompositeLit, pkg *packages.Package,
 		}
 
 		fieldName := ident.Name
-		sem, known := plat.Lookup(fieldName)
+
+		// Try type-qualified lookup first (e.g. "TokenReviewSpec.audiences"),
+		// then fall back to raw field name for backward compatibility.
+		qualifiedName := fieldName
+		if structTypeName != "" {
+			qualifiedName = structTypeName + "." + fieldName
+		}
+		sem, known := plat.Lookup(qualifiedName)
+		if !known {
+			sem, known = plat.Lookup(fieldName)
+		}
 		if !known {
 			continue
 		}
@@ -76,15 +86,10 @@ func (p *Pass) analyzeCompositeLit(lit *ast.CompositeLit, pkg *packages.Package,
 		value := exprToString(kv.Value)
 		isDefault := isZeroValue(kv.Value)
 
-		qualifiedField := fieldName
-		if structTypeName != "" {
-			qualifiedField = structTypeName + "." + fieldName
-		}
-
 		result.Defaults = append(result.Defaults, types.DefaultValue{
-			Field: qualifiedField,
+			Field: qualifiedName,
 			Location: types.Location{
-				File:    filepath.Base(pos.Filename),
+				File:    loader.RelativePath(pos.Filename, modulePath),
 				Line:    pos.Line,
 				Package: pkg.PkgPath,
 			},
@@ -96,7 +101,7 @@ func (p *Pass) analyzeCompositeLit(lit *ast.CompositeLit, pkg *packages.Package,
 	}
 }
 
-func (p *Pass) analyzeFlagCall(call *ast.CallExpr, pkg *packages.Package, plat *platform.Knowledge, result *types.AnalysisResult, fset *token.FileSet) {
+func (p *Pass) analyzeFlagCall(call *ast.CallExpr, pkg *packages.Package, plat *platform.Knowledge, result *types.AnalysisResult, fset *token.FileSet, modulePath string) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return
@@ -143,7 +148,7 @@ func (p *Pass) analyzeFlagCall(call *ast.CallExpr, pkg *packages.Package, plat *
 	result.Defaults = append(result.Defaults, types.DefaultValue{
 		Field: flagName,
 		Location: types.Location{
-			File:    filepath.Base(pos.Filename),
+			File:    loader.RelativePath(pos.Filename, modulePath),
 			Line:    pos.Line,
 			Package: pkg.PkgPath,
 		},

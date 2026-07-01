@@ -77,7 +77,7 @@ func TestDetectOrphanedResources(t *testing.T) {
 		Lifecycles: []types.ResourceLifecycle{
 			{
 				Resource:   "ConfigMap",
-				Create:     types.Location{File: "ctrl.go", Function: "Reconcile"},
+				Create:     &types.Location{File: "ctrl.go", Function: "Reconcile"},
 				Orphanable: true,
 			},
 		},
@@ -113,7 +113,7 @@ func TestContradictionIDsAreSequential(t *testing.T) {
 		Lifecycles: []types.ResourceLifecycle{
 			{
 				Resource:   "Secret",
-				Create:     types.Location{File: "ctrl.go", Function: "Reconcile"},
+				Create:     &types.Location{File: "ctrl.go", Function: "Reconcile"},
 				Orphanable: true,
 			},
 		},

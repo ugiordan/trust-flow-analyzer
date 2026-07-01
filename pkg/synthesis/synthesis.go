@@ -101,22 +101,30 @@ func detectPermissiveDefaults(result *types.AnalysisResult) []types.Contradictio
 	}
 }
 
+// locationKey produces a unique key for a Location that avoids collisions
+// between methods with the same name on different types in the same package.
+// Format: "package.function@file:line" which is unique per source location.
+func locationKey(loc types.Location) string {
+	return fmt.Sprintf("%s.%s@%s:%d", loc.Package, loc.Function, loc.File, loc.Line)
+}
+
 func detectDroppedErrorsOnAuthPath(result *types.AnalysisResult) []types.Contradiction {
 	var contradictions []types.Contradiction
 
-	// Build a set of auth-related functions (not just packages) for precise matching.
-	authFunctions := make(map[string]bool) // key: "package.function"
+	// Build a set of auth-related functions using location-qualified keys to
+	// avoid collisions between methods with the same name on different types.
+	authFunctions := make(map[string]bool)
 	for _, flow := range result.AuthFlows {
 		// Include entry points.
-		authFunctions[flow.Entry.Package+"."+flow.Entry.Function] = true
+		authFunctions[locationKey(flow.Entry)] = true
 		if flow.Authentication != nil {
-			authFunctions[flow.Authentication.Location.Package+"."+flow.Authentication.Location.Function] = true
+			authFunctions[locationKey(flow.Authentication.Location)] = true
 		}
 		if flow.Authorization != nil {
-			authFunctions[flow.Authorization.Location.Package+"."+flow.Authorization.Location.Function] = true
+			authFunctions[locationKey(flow.Authorization.Location)] = true
 		}
 		for _, v := range flow.Validators {
-			authFunctions[v.Location.Package+"."+v.Location.Function] = true
+			authFunctions[locationKey(v.Location)] = true
 		}
 	}
 
@@ -124,7 +132,7 @@ func detectDroppedErrorsOnAuthPath(result *types.AnalysisResult) []types.Contrad
 		if !ep.Dropped {
 			continue
 		}
-		funcKey := ep.Origin.Package + "." + ep.Origin.Function
+		funcKey := locationKey(ep.Origin)
 		if !authFunctions[funcKey] {
 			continue
 		}
@@ -162,13 +170,13 @@ func detectOrphanedResources(result *types.AnalysisResult) []types.Contradiction
 	var contradictions []types.Contradiction
 
 	for _, lc := range result.Lifecycles {
-		if !lc.Orphanable {
+		if !lc.Orphanable || lc.Create == nil {
 			continue
 		}
 
 		assumptions := []types.Assumption{
 			{
-				Location:    lc.Create,
+				Location:    *lc.Create,
 				Description: lc.Create.Function + " creates " + lc.Resource + " without owner reference or finalizer",
 			},
 		}
