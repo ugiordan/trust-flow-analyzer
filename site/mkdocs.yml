@@ -88,6 +88,7 @@ nav:
     - Quick Start: getting-started/quickstart.md
   - Guides:
     - Understanding Output: guides/understanding-output.md
+    - Validation Results: guides/validation.md
     - Integration: guides/integration.md
     - Platform Knowledge: guides/platform-knowledge.md
   - Reference:
