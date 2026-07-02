@@ -125,8 +125,8 @@ func findEntryPoints(prog *loader.Program) []*ssa.Function {
 }
 
 func isEntryPoint(fn *ssa.Function) bool {
+	// HTTP handlers: ServeHTTP method with (ResponseWriter, *Request) params
 	if fn.Name() == "ServeHTTP" {
-		// ServeHTTP must have a receiver (it's a method) and the correct param types.
 		if fn.Signature.Recv() == nil {
 			return false
 		}
@@ -135,6 +135,8 @@ func isEntryPoint(fn *ssa.Function) bool {
 		}
 		return false
 	}
+
+	// HTTP handler functions: Handle*, handler* with HTTP params
 	name := fn.Name()
 	if strings.HasPrefix(name, "Handle") || strings.HasPrefix(name, "handler") {
 		sig := fn.Signature
@@ -142,6 +144,49 @@ func isEntryPoint(fn *ssa.Function) bool {
 			return true
 		}
 	}
+
+	// Webhook handlers: Handle method with admission types, or Default/Validate methods
+	if isWebhookEntryPoint(fn) {
+		return true
+	}
+
+	// Controller Reconcile methods
+	if fn.Name() == "Reconcile" && fn.Signature.Recv() != nil && fn.Signature.Params().Len() == 2 {
+		for i := 0; i < fn.Signature.Params().Len(); i++ {
+			paramType := fn.Signature.Params().At(i).Type().String()
+			if strings.Contains(paramType, "reconcile.Request") || strings.Contains(paramType, "ctrl.Request") {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func isWebhookEntryPoint(fn *ssa.Function) bool {
+	if fn.Signature.Recv() == nil {
+		return false
+	}
+	name := fn.Name()
+
+	// admission.Handler.Handle method
+	if name == "Handle" {
+		for i := 0; i < fn.Signature.Params().Len(); i++ {
+			paramType := fn.Signature.Params().At(i).Type().String()
+			if strings.Contains(paramType, "admission.Request") || strings.Contains(paramType, "webhook.") {
+				return true
+			}
+		}
+	}
+
+	// Defaulter/Validator webhook interfaces
+	if name == "Default" || name == "ValidateCreate" || name == "ValidateUpdate" || name == "ValidateDelete" {
+		recvType := fn.Signature.Recv().Type().String()
+		if strings.Contains(recvType, "webhook") || fn.Signature.Params().Len() <= 2 {
+			return true
+		}
+	}
+
 	return false
 }
 

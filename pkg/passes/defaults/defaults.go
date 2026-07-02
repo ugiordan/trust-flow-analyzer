@@ -24,11 +24,32 @@ func (p *Pass) Run(ctx *passes.Context) error {
 		p.analyzePackage(pkg, ctx.Platform, ctx.Result, ctx.Program.Fset, ctx.Program.ModulePath)
 	}
 
+	ctx.Result.Defaults = deduplicateDefaults(ctx.Result.Defaults)
+
 	sort.Slice(ctx.Result.Defaults, func(i, j int) bool {
 		return ctx.Result.Defaults[i].Field < ctx.Result.Defaults[j].Field
 	})
 
 	return nil
+}
+
+func deduplicateDefaults(defaults []types.DefaultValue) []types.DefaultValue {
+	type key struct {
+		field string
+		file  string
+		line  int
+	}
+	seen := make(map[key]bool)
+	var result []types.DefaultValue
+	for _, d := range defaults {
+		k := key{field: d.Field, file: d.Location.File, line: d.Location.Line}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		result = append(result, d)
+	}
+	return result
 }
 
 func (p *Pass) analyzePackage(pkg *packages.Package, plat *platform.Knowledge, result *types.AnalysisResult, fset *token.FileSet, modulePath string) {
@@ -53,6 +74,14 @@ func (p *Pass) analyzeCompositeLit(lit *ast.CompositeLit, pkg *packages.Package,
 		if t := pkg.TypesInfo.TypeOf(lit.Type); t != nil {
 			structTypeName = t.String()
 		}
+	}
+
+	// Skip struct literals from K8s API types. Setting ObjectMeta.Namespace in a
+	// struct literal is just assigning a namespace value, not configuring a
+	// security-critical default. Only analyze structs from the target module or
+	// its direct API types.
+	if structTypeName != "" && isK8sAPIType(structTypeName) {
+		return
 	}
 
 	for _, elt := range lit.Elts {
@@ -210,4 +239,21 @@ func inferOperatorDefault(value string, isDefault bool) string {
 		return value + " (unchanged)"
 	}
 	return value
+}
+
+// isK8sAPIType returns true for K8s standard API types where field assignments
+// like Namespace are just value-setting, not security-relevant defaults.
+func isK8sAPIType(typeName string) bool {
+	prefixes := []string{
+		"k8s.io/api/",
+		"k8s.io/apimachinery/",
+		"k8s.io/client-go/",
+		"crypto/tls",
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(typeName, p) {
+			return true
+		}
+	}
+	return false
 }

@@ -76,12 +76,11 @@ func (p *Pass) Run(ctx *passes.Context) error {
 }
 
 func analyzeCall(prog *loader.Program, fn *ssa.Function, call *ssa.Call, resources map[string]*types.ResourceLifecycle) {
-	callee := call.Call.StaticCallee()
-	if callee == nil {
+	calleeName, isK8s := resolveCallTarget(call)
+	if calleeName == "" {
 		return
 	}
 
-	calleeName := callee.Name()
 	pos := prog.Fset.Position(call.Pos())
 	loc := types.Location{
 		File:     loader.RelativePath(pos.Filename, prog.ModulePath),
@@ -92,12 +91,10 @@ func analyzeCall(prog *loader.Program, fn *ssa.Function, call *ssa.Call, resourc
 
 	resourceKey := inferResourceKey(fn, call)
 
-	// For create/delete patterns, also verify the receiver type looks like a
-	// K8s client to reduce false positives from unrelated Create/Delete methods.
-	if matchesAny(calleeName, createPatterns) && isK8sClientCall(callee) {
+	if matchesAny(calleeName, createPatterns) && isK8s {
 		lc := getOrCreate(resources, resourceKey)
 		lc.Create = &loc
-	} else if matchesAny(calleeName, deletePatterns) && isK8sClientCall(callee) {
+	} else if matchesAny(calleeName, deletePatterns) && isK8s {
 		lc := getOrCreate(resources, resourceKey)
 		lc.Delete = &loc
 	} else if matchesAny(calleeName, ownerPatterns) {
@@ -107,6 +104,46 @@ func analyzeCall(prog *loader.Program, fn *ssa.Function, call *ssa.Call, resourc
 		lc := getOrCreate(resources, resourceKey)
 		lc.Finalizer = &loc
 	}
+}
+
+// resolveCallTarget handles both static calls and interface dispatch.
+// Returns the method name and whether it looks like a K8s client call.
+func resolveCallTarget(call *ssa.Call) (string, bool) {
+	if callee := call.Call.StaticCallee(); callee != nil {
+		return callee.Name(), isK8sClientCall(callee)
+	}
+
+	// Interface dispatch: controller-runtime's client.Client uses invoke mode.
+	if call.Call.IsInvoke() {
+		methodName := call.Call.Method.Name()
+		recvType := call.Call.Value.Type().String()
+		recvType = strings.TrimPrefix(recvType, "*")
+		isK8s := isK8sInterfaceType(recvType)
+		return methodName, isK8s
+	}
+
+	return "", false
+}
+
+// isK8sInterfaceType checks if an interface type name looks like a K8s client.
+func isK8sInterfaceType(typeName string) bool {
+	k8sPatterns := []string{
+		"sigs.k8s.io/controller-runtime/pkg/client",
+		"k8s.io/client-go",
+		"controller-runtime",
+	}
+	for _, p := range k8sPatterns {
+		if strings.Contains(typeName, p) {
+			return true
+		}
+	}
+	clientInterfaces := []string{"Client", "Writer", "Reader", "StatusClient"}
+	for _, iface := range clientInterfaces {
+		if strings.HasSuffix(typeName, "."+iface) || typeName == iface {
+			return true
+		}
+	}
+	return false
 }
 
 // isK8sClientCall checks whether the callee's receiver or package path looks
