@@ -1,0 +1,101 @@
+site_name: trust-flow-analyzer
+site_url: https://ugiordan.github.io/trust-flow-analyzer
+repo_url: https://github.com/ugiordan/trust-flow-analyzer
+repo_name: ugiordan/trust-flow-analyzer
+
+copyright: Copyright &copy; Ugo Giordano
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/graph
+  font:
+    text: Red Hat Text
+    code: Red Hat Mono
+  palette:
+    - scheme: default
+      primary: black
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.top
+    - navigation.indexes
+    - navigation.instant
+    - navigation.path
+    - navigation.sections
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+
+plugins:
+  - search
+  - glightbox:
+      touchNavigation: true
+      loop: false
+      zoomable: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - attr_list
+  - md_in_html
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+
+extra_css:
+  - assets/css/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ugiordan/trust-flow-analyzer
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - Guides:
+    - Understanding Output: guides/understanding-output.md
+    - Integration: guides/integration.md
+    - Platform Knowledge: guides/platform-knowledge.md
+  - Reference:
+    - CLI Commands: reference/cli.md
+    - Analysis Passes: reference/passes.md
+    - Output Format: reference/output-format.md
+  - Architecture:
+    - Design Overview: architecture/overview.md
+  - Contributing:
+    - Development Setup: contributing/setup.md
+    - Adding Passes: contributing/passes.md
