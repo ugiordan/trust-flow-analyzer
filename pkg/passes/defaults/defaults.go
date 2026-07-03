@@ -211,11 +211,6 @@ func (p *Pass) analyzeKubebuilderDefaults(decl *ast.GenDecl, pkg *packages.Packa
 		typeName := pkg.PkgPath + "." + typeSpec.Name.Name
 
 		for _, field := range structType.Fields.List {
-			if field.Tag == nil {
-				continue
-			}
-
-			tag := field.Tag.Value
 			fieldName := ""
 			if len(field.Names) > 0 {
 				fieldName = field.Names[0].Name
@@ -224,9 +219,25 @@ func (p *Pass) analyzeKubebuilderDefaults(decl *ast.GenDecl, pkg *packages.Packa
 				continue
 			}
 
+			// Kubebuilder markers can appear in struct tags or Go doc comments.
+			// Collect all text to scan.
+			searchText := ""
+			if field.Tag != nil {
+				searchText = field.Tag.Value
+			}
+			if field.Doc != nil {
+				searchText += " " + field.Doc.Text()
+			}
+			if field.Comment != nil {
+				searchText += " " + field.Comment.Text()
+			}
+			if searchText == "" {
+				continue
+			}
+
 			qualifiedField := typeName + "." + fieldName
 
-			if defaultVal, ok := extractKubebuilderDefault(tag); ok {
+			if defaultVal, ok := extractKubebuilderDefault(searchText); ok {
 				sem, known := plat.Lookup(fieldName)
 				if !known {
 					sem = platform.FieldSemantics{
@@ -251,7 +262,7 @@ func (p *Pass) analyzeKubebuilderDefaults(decl *ast.GenDecl, pkg *packages.Packa
 				})
 			}
 
-			if isOptionalSecurityField(fieldName, tag) {
+			if isOptionalSecurityField(fieldName, searchText) {
 				pos := fset.Position(field.Pos())
 				result.Defaults = append(result.Defaults, types.DefaultValue{
 					Field: qualifiedField,
