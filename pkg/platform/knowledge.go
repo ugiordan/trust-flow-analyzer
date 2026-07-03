@@ -85,4 +85,36 @@ func (k *Knowledge) loadK8sSemantics() {
 		Permissiveness: "NEUTRAL",
 		Description:    "Pod service account. Empty uses the 'default' SA for the namespace.",
 	}
+
+	k.entries["sslMode"] = FieldSemantics{
+		Field:          "sslMode",
+		EmptyMeaning:   "SSL/TLS mode for database connections",
+		Permissiveness: "PERMISSIVE",
+		Description:    "When set to 'disable', database connections use plaintext. Passwords transmitted in cleartext.",
+	}
+	k.entries["SslMode"] = FieldSemantics{
+		Field:          "SslMode",
+		EmptyMeaning:   "SSL/TLS mode for database connections",
+		Permissiveness: "PERMISSIVE",
+		Description:    "When set to 'disable', database connections use plaintext. Passwords transmitted in cleartext.",
+	}
+
+	k.entries["KubeRBACProxy"] = FieldSemantics{
+		Field:          "KubeRBACProxy",
+		EmptyMeaning:   "No kube-rbac-proxy sidecar deployed. API endpoints have no auth.",
+		Permissiveness: "PERMISSIVE",
+		Description:    "When nil/absent, the operator does not inject a kube-rbac-proxy sidecar. The application's API is exposed without authentication or authorization.",
+	}
+	k.entries["OAuthProxy"] = FieldSemantics{
+		Field:          "OAuthProxy",
+		EmptyMeaning:   "No OAuth proxy sidecar deployed. API endpoints have no auth.",
+		Permissiveness: "PERMISSIVE",
+		Description:    "When nil/absent, the operator does not inject an OAuth proxy sidecar. The application's API is exposed without authentication.",
+	}
+	k.entries["Authorino"] = FieldSemantics{
+		Field:          "Authorino",
+		EmptyMeaning:   "No Authorino auth policy deployed.",
+		Permissiveness: "PERMISSIVE",
+		Description:    "When nil/absent, no Authorino-based auth policy is applied to the service.",
+	}
 }

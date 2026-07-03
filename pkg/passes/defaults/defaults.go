@@ -60,6 +60,8 @@ func (p *Pass) analyzePackage(pkg *packages.Package, plat *platform.Knowledge, r
 				p.analyzeCompositeLit(node, pkg, plat, result, fset, modulePath)
 			case *ast.CallExpr:
 				p.analyzeFlagCall(node, pkg, plat, result, fset, modulePath)
+			case *ast.GenDecl:
+				p.analyzeKubebuilderDefaults(node, pkg, plat, result, fset, modulePath)
 			}
 			return true
 		})
@@ -185,6 +187,160 @@ func (p *Pass) analyzeFlagCall(call *ast.CallExpr, pkg *packages.Package, plat *
 		PlatformMeaning: sem.EmptyMeaning,
 		Permissiveness:  sem.Permissiveness,
 	})
+}
+
+// analyzeKubebuilderDefaults scans struct type declarations for +kubebuilder:default=
+// and +kubebuilder:validation:Optional annotations on fields. These define CRD field
+// defaults that operators apply when users don't set a value.
+func (p *Pass) analyzeKubebuilderDefaults(decl *ast.GenDecl, pkg *packages.Package, plat *platform.Knowledge, result *types.AnalysisResult, fset *token.FileSet, modulePath string) {
+	if decl.Tok != token.TYPE {
+		return
+	}
+
+	for _, spec := range decl.Specs {
+		typeSpec, ok := spec.(*ast.TypeSpec)
+		if !ok {
+			continue
+		}
+
+		structType, ok := typeSpec.Type.(*ast.StructType)
+		if !ok {
+			continue
+		}
+
+		typeName := pkg.PkgPath + "." + typeSpec.Name.Name
+
+		for _, field := range structType.Fields.List {
+			if field.Tag == nil {
+				continue
+			}
+
+			tag := field.Tag.Value
+			fieldName := ""
+			if len(field.Names) > 0 {
+				fieldName = field.Names[0].Name
+			}
+			if fieldName == "" {
+				continue
+			}
+
+			qualifiedField := typeName + "." + fieldName
+
+			if defaultVal, ok := extractKubebuilderDefault(tag); ok {
+				sem, known := plat.Lookup(fieldName)
+				if !known {
+					sem = platform.FieldSemantics{
+						Field:          fieldName,
+						EmptyMeaning:   "kubebuilder default: " + defaultVal,
+						Permissiveness: classifyKubebuilderDefault(fieldName, defaultVal),
+					}
+				}
+
+				pos := fset.Position(field.Pos())
+				result.Defaults = append(result.Defaults, types.DefaultValue{
+					Field: qualifiedField,
+					Location: types.Location{
+						File:    loader.RelativePath(pos.Filename, modulePath),
+						Line:    pos.Line,
+						Package: pkg.PkgPath,
+					},
+					LibraryDefault:  defaultVal,
+					PlatformMeaning: sem.EmptyMeaning,
+					Permissiveness:  sem.Permissiveness,
+					OperatorDefault: defaultVal + " (kubebuilder)",
+				})
+			}
+
+			if isOptionalSecurityField(fieldName, tag) {
+				pos := fset.Position(field.Pos())
+				result.Defaults = append(result.Defaults, types.DefaultValue{
+					Field: qualifiedField,
+					Location: types.Location{
+						File:    loader.RelativePath(pos.Filename, modulePath),
+						Line:    pos.Line,
+						Package: pkg.PkgPath,
+					},
+					LibraryDefault:  "nil (optional)",
+					PlatformMeaning: "Security component absent when not configured",
+					Permissiveness:  "PERMISSIVE",
+					OperatorDefault: "nil (user must opt-in)",
+				})
+			}
+		}
+	}
+}
+
+// extractKubebuilderDefault parses +kubebuilder:default= from a struct tag.
+// The annotation can appear in the json tag comment or as a Go comment above the field.
+func extractKubebuilderDefault(tag string) (string, bool) {
+	marker := "+kubebuilder:default="
+	idx := strings.Index(tag, marker)
+	if idx < 0 {
+		return "", false
+	}
+
+	val := tag[idx+len(marker):]
+	if end := strings.IndexAny(val, "` \n"); end >= 0 {
+		val = val[:end]
+	}
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return "", false
+	}
+	return val, true
+}
+
+// classifyKubebuilderDefault determines if a kubebuilder default is security-relevant.
+func classifyKubebuilderDefault(fieldName, value string) string {
+	lower := strings.ToLower(fieldName)
+	lowerVal := strings.ToLower(value)
+
+	insecureDefaults := map[string]bool{
+		"disable": true, "disabled": true, "false": true,
+		"none": true, "off": true, "skip": true,
+	}
+
+	if strings.Contains(lower, "ssl") || strings.Contains(lower, "tls") {
+		if insecureDefaults[lowerVal] {
+			return "PERMISSIVE"
+		}
+	}
+
+	if strings.Contains(lower, "auth") || strings.Contains(lower, "rbac") ||
+		strings.Contains(lower, "proxy") || strings.Contains(lower, "security") {
+		if insecureDefaults[lowerVal] || lowerVal == "" {
+			return "PERMISSIVE"
+		}
+	}
+
+	return "NEUTRAL"
+}
+
+// isOptionalSecurityField detects CRD fields for security components (auth proxies,
+// TLS config, RBAC) that are pointer types with +optional. When nil, the security
+// component is absent from the rendered deployment.
+func isOptionalSecurityField(fieldName, tag string) bool {
+	lower := strings.ToLower(fieldName)
+	securityFields := []string{
+		"rbacproxy", "kubeRBACProxy", "oauthproxy", "authproxy",
+		"tls", "mtls", "auth", "authorization", "authorino",
+	}
+
+	isSecurityField := false
+	for _, pattern := range securityFields {
+		if strings.Contains(strings.ToLower(lower), strings.ToLower(pattern)) {
+			isSecurityField = true
+			break
+		}
+	}
+	if !isSecurityField {
+		return false
+	}
+
+	isOptional := strings.Contains(tag, "+optional") ||
+		strings.Contains(tag, "omitempty")
+
+	return isOptional
 }
 
 func isFlagMethod(name string) bool {
