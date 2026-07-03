@@ -62,6 +62,9 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	}
 
 	for _, lc := range resources {
+		if isNoiseResource(lc.Resource) {
+			continue
+		}
 		// A resource is orphanable if it has no owner reference, no finalizer,
 		// AND no explicit delete call (which would serve as manual cleanup).
 		lc.Orphanable = lc.Owner == nil && lc.Finalizer == nil && lc.Delete == nil
@@ -236,6 +239,35 @@ func matchesAny(name string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+// noiseResources is a set of type names that are not real K8s resources.
+// These appear when the lifecycle pass resolves interface types or generic Go
+// types from call arguments.
+var noiseResources = map[string]bool{
+	// Go builtin types
+	"string": true, "int": true, "int8": true, "int16": true, "int32": true, "int64": true,
+	"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true,
+	"float32": true, "float64": true, "bool": true, "byte": true, "rune": true,
+	"complex64": true, "complex128": true, "uintptr": true, "error": true,
+
+	// Generic interface names from K8s client and Go stdlib
+	"Object": true, "Unstructured": true, "Client": true,
+	"Writer": true, "Reader": true, "Interface": true,
+	"Closer": true, "Handler": true,
+
+	// Runtime/internal types that leak through SSA analysis
+	"traceLocker": true, "Map": true, "Mutex": true, "RWMutex": true,
+	"WaitGroup": true, "Timer": true, "Ticker": true,
+}
+
+// isNoiseResource returns true if the resource name is a known noise entry
+// that should be filtered out of lifecycle results.
+func isNoiseResource(name string) bool {
+	if len(name) < 3 {
+		return true
+	}
+	return noiseResources[name]
 }
 
 func packagePath(fn *ssa.Function) string {

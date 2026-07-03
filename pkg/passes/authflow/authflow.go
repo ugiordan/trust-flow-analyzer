@@ -150,6 +150,12 @@ func isEntryPoint(fn *ssa.Function) bool {
 		return true
 	}
 
+	// gRPC service methods: exported methods on a *Server receiver with
+	// (context.Context, *Request) -> (*Response, error) signature pattern.
+	if isGRPCEntryPoint(fn) {
+		return true
+	}
+
 	// Controller Reconcile methods
 	if fn.Name() == "Reconcile" && fn.Signature.Recv() != nil && fn.Signature.Params().Len() == 2 {
 		for i := 0; i < fn.Signature.Params().Len(); i++ {
@@ -188,6 +194,63 @@ func isWebhookEntryPoint(fn *ssa.Function) bool {
 	}
 
 	return false
+}
+
+// isGRPCEntryPoint detects gRPC service method implementations. These are exported
+// methods on a struct whose type name contains "Server" (e.g. ModelRegistryServiceServer),
+// with a context.Context parameter and error return. This is a heuristic that catches
+// the common protobuf-generated service implementation pattern.
+func isGRPCEntryPoint(fn *ssa.Function) bool {
+	if fn.Signature.Recv() == nil {
+		return false
+	}
+
+	// Must be exported (starts with uppercase)
+	name := fn.Name()
+	if len(name) == 0 || name[0] < 'A' || name[0] > 'Z' {
+		return false
+	}
+
+	// Receiver type must contain "Server"
+	recvType := fn.Signature.Recv().Type().String()
+	recvType = strings.TrimPrefix(recvType, "*")
+	if !strings.Contains(recvType, "Server") {
+		return false
+	}
+
+	// Must have at least 2 params, one of which is context.Context
+	params := fn.Signature.Params()
+	if params.Len() < 2 {
+		return false
+	}
+
+	hasContext := false
+	for i := 0; i < params.Len(); i++ {
+		paramType := params.At(i).Type().String()
+		if paramType == "context.Context" {
+			hasContext = true
+			break
+		}
+	}
+	if !hasContext {
+		return false
+	}
+
+	// Must return an error
+	results := fn.Signature.Results()
+	if results == nil || results.Len() == 0 {
+		return false
+	}
+
+	hasError := false
+	for i := 0; i < results.Len(); i++ {
+		if results.At(i).Type().String() == "error" {
+			hasError = true
+			break
+		}
+	}
+
+	return hasError
 }
 
 // hasHTTPParams returns true if the function signature contains http.ResponseWriter

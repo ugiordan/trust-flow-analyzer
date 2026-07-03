@@ -35,6 +35,10 @@ func WriteMarkdown(w io.Writer, result *types.AnalysisResult) error {
 		writeLifecycles(p, result.Lifecycles)
 	}
 
+	if len(result.SecretExposures) > 0 {
+		writeSecretExposures(p, result.SecretExposures)
+	}
+
 	if len(result.Contradictions) > 0 {
 		writeContradictions(p, result.Contradictions)
 	}
@@ -214,6 +218,18 @@ func writeLifecycles(p *printer, lifecycles []types.ResourceLifecycle) {
 		if lc.Orphanable {
 			p.line("Risk: ORPHANABLE (no owner reference or finalizer)")
 		}
+		p.blank()
+	}
+}
+
+func writeSecretExposures(p *printer, exposures []types.SecretExposure) {
+	p.line("## Secret Exposures")
+	p.blank()
+
+	for _, se := range exposures {
+		p.line("### %s at %s (line %d)", se.Pattern, se.Location.File, se.Location.Line)
+		p.line("Field: %s", se.Field)
+		p.line("Description: %s", se.Description)
 		p.blank()
 	}
 }

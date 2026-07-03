@@ -113,13 +113,23 @@ type Assumption struct {
 	Description string
 }
 
+// SecretExposure captures a pattern where secrets may be exposed through
+// insecure mechanisms (e.g. environment variables expanded into process args).
+type SecretExposure struct {
+	Location    Location
+	Pattern     string // ENV_IN_ARGS, HARDCODED_SECRET
+	Description string
+	Field       string
+}
+
 // AnalysisResult holds the combined output of all analysis passes.
 type AnalysisResult struct {
-	Project        string
-	AuthFlows      []AuthFlow
-	Defaults       []DefaultValue
-	Contracts      []Contract
-	ErrorPaths     []ErrorPath
-	Lifecycles     []ResourceLifecycle
-	Contradictions []Contradiction
+	Project         string
+	AuthFlows       []AuthFlow
+	Defaults        []DefaultValue
+	Contracts       []Contract
+	ErrorPaths      []ErrorPath
+	Lifecycles      []ResourceLifecycle
+	SecretExposures []SecretExposure
+	Contradictions  []Contradiction
 }

@@ -99,6 +99,20 @@ func (p *Pass) analyzeCompositeLit(lit *ast.CompositeLit, pkg *packages.Package,
 
 		fieldName := ident.Name
 
+		// Skip Namespace fields on non-API structs. Setting Namespace on internal
+		// controller structs (e.g. corev1.ObjectMeta in a reconciler) is a value
+		// assignment, not a security-relevant default. Only keep Namespace matches
+		// on CRD API types (paths containing "/api/" or "/apis/").
+		if fieldName == "Namespace" && structTypeName != "" {
+			if !strings.Contains(structTypeName, "/api/") && !strings.Contains(structTypeName, "/apis/") {
+				// Also skip if the value is a non-zero assignment (e.g. "istio-system").
+				// Non-zero values are explicit assignments, not defaults.
+				if !isZeroValue(kv.Value) {
+					continue
+				}
+			}
+		}
+
 		// Try type-qualified lookup first (e.g. "TokenReviewSpec.audiences"),
 		// then fall back to raw field name for backward compatibility.
 		qualifiedName := fieldName
