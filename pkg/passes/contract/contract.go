@@ -91,6 +91,12 @@ func analyzeContract(prog *loader.Program, fn *ssa.Function) *ttypes.Contract {
 		}
 		seen[callerFn] = true
 
+		// Skip callers outside the analyzed module. External callers (stdlib,
+		// dependencies) are not actionable findings for the project under analysis.
+		if !prog.IsModuleFunc(callerFn) {
+			continue
+		}
+
 		if edge.Site == nil {
 			continue
 		}

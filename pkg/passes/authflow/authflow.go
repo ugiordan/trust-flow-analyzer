@@ -188,7 +188,13 @@ func isWebhookEntryPoint(fn *ssa.Function) bool {
 	// Defaulter/Validator webhook interfaces
 	if name == "Default" || name == "ValidateCreate" || name == "ValidateUpdate" || name == "ValidateDelete" {
 		recvType := fn.Signature.Recv().Type().String()
-		if strings.Contains(recvType, "webhook") || fn.Signature.Params().Len() <= 2 {
+		pkgPath := ""
+		if fn.Package() != nil {
+			pkgPath = fn.Package().Pkg.Path()
+		}
+		combined := recvType + " " + pkgPath
+		if strings.Contains(combined, "webhook") || strings.Contains(combined, "admission") ||
+			strings.Contains(combined, "Defaulter") || strings.Contains(combined, "Validator") {
 			return true
 		}
 	}

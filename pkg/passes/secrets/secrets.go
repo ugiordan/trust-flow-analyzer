@@ -16,7 +16,7 @@ import (
 
 // secretEnvPattern matches shell-style variable references that contain secret-related
 // substrings (e.g. $(DB_PASSWORD), $(API_SECRET_KEY), $(AUTH_TOKEN)).
-var secretEnvPattern = regexp.MustCompile(`\$\([A-Z_]*(?:PASSWORD|SECRET|TOKEN|KEY)[A-Z_]*\)`)
+var secretEnvPattern = regexp.MustCompile(`\$\((?:[A-Z]+_)*(?:PASSWORD|SECRET|TOKEN|KEY)(?:_[A-Z]+)*\)`)
 
 // Pass implements the secret exposure analysis.
 type Pass struct{}

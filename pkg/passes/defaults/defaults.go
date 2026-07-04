@@ -312,6 +312,11 @@ func extractKubebuilderDefault(tag string) (string, bool) {
 	if val == "" {
 		return "", false
 	}
+	// Skip complex JSON objects/arrays. Space-splitting truncates them and they
+	// are not simple security-relevant defaults.
+	if strings.HasPrefix(val, "{") || strings.HasPrefix(val, "[") {
+		return "", false
+	}
 	return val, true
 }
 
