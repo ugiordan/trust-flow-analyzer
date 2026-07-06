@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Build linux-amd64
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          go build -ldflags "-s -w -X main.version=${VERSION}" \
+            -o trust-flow-analyzer-linux-amd64 ./cmd/trust-flow-analyzer/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trust-flow-analyzer-linux-amd64
+          path: trust-flow-analyzer-linux-amd64
+
+  build-macos-arm64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Build darwin-arm64
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          go build -ldflags "-s -w -X main.version=${VERSION}" \
+            -o trust-flow-analyzer-darwin-arm64 ./cmd/trust-flow-analyzer/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trust-flow-analyzer-darwin-arm64
+          path: trust-flow-analyzer-darwin-arm64
+
+  release:
+    needs: [build-linux, build-macos-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: binaries/
+          merge-multiple: true
+      - name: Create checksums
+        run: |
+          cd binaries
+          sha256sum trust-flow-analyzer-* > checksums.txt
+          cat checksums.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "trust-flow-analyzer ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            binaries/trust-flow-analyzer-* \
+            binaries/checksums.txt
