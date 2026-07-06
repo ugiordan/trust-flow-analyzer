@@ -84,11 +84,19 @@ func LoadTreeSitter(dir string, lang string, stderr io.Writer) (*ir.AnalysisProg
 			if relErr != nil {
 				relPath = ep.File
 			}
+			fnPkg := ""
+			for _, fn := range result.Functions {
+				if fn.Name == ep.FuncName && fn.File == ep.File {
+					fnPkg = fn.Package
+					break
+				}
+			}
 			allErrorPatterns = append(allErrorPatterns, ir.ErrorPatternInfo{
 				Kind:     ep.Kind,
 				File:     relPath,
 				Line:     ep.Line,
 				FuncName: ep.FuncName,
+				Package:  fnPkg,
 				Message:  ep.Message,
 			})
 		}

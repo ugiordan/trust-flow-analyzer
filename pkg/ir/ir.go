@@ -34,6 +34,7 @@ type ErrorPatternInfo struct {
 	File     string
 	Line     int
 	FuncName string
+	Package  string
 	Message  string
 }
 

@@ -131,7 +131,9 @@ func (w *pythonWalker) extractClass(node *sitter.Node) {
 	className := nameNode.Content(w.src)
 
 	prevClass := w.curClass
+	prevFunc := w.curFunc
 	w.curClass = className
+	w.curFunc = ""
 
 	body := node.ChildByFieldName("body")
 	if body != nil {
@@ -144,6 +146,7 @@ func (w *pythonWalker) extractClass(node *sitter.Node) {
 	}
 
 	w.curClass = prevClass
+	w.curFunc = prevFunc
 }
 
 // extractDecorated handles a decorated_definition: collects decorator text, then
