@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"go/ast"
 	"go/token"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -58,6 +59,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 	prog := ctx.Program
 
 	for filePath, content := range prog.Files {
+		relFile := relPath(prog.RootDir, filePath)
 		scanner := bufio.NewScanner(strings.NewReader(string(content)))
 		lineNum := 0
 		for scanner.Scan() {
@@ -83,7 +85,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 					ctx.Result.Defaults = append(ctx.Result.Defaults, types.DefaultValue{
 						Field: field,
 						Location: types.Location{
-							File: filePath,
+							File: relFile,
 							Line: lineNum,
 						},
 						LibraryDefault:  field,
@@ -111,7 +113,7 @@ func deduplicateDefaults(defaults []types.DefaultValue) []types.DefaultValue {
 		line  int
 	}
 	seen := make(map[key]bool)
-	var result []types.DefaultValue
+	result := make([]types.DefaultValue, 0)
 	for _, d := range defaults {
 		k := key{field: d.Field, file: d.Location.File, line: d.Location.Line}
 		if seen[k] {
@@ -496,6 +498,19 @@ func inferOperatorDefault(value string, isDefault bool) string {
 		return value + " (unchanged)"
 	}
 	return value
+}
+
+// relPath computes a relative path from rootDir. If rootDir is empty or
+// the computation fails, the original path is returned.
+func relPath(rootDir, filePath string) string {
+	if rootDir == "" {
+		return filePath
+	}
+	rel, err := filepath.Rel(rootDir, filePath)
+	if err != nil {
+		return filePath
+	}
+	return rel
 }
 
 // isK8sAPIType returns true for K8s standard API types where field assignments

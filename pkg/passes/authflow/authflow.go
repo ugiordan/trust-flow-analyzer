@@ -2,6 +2,7 @@ package authflow
 
 import (
 	gotypes "go/types"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -159,7 +160,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 		flow := &types.AuthFlow{
 			Name: entry.Name,
 			Entry: types.Location{
-				File:     entry.File,
+				File:     relPath(prog.RootDir, entry.File),
 				Line:     entry.Line,
 				Function: entry.Name,
 				Package:  entry.Package,
@@ -170,7 +171,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 			fn := authnSteps[0].fn
 			flow.Authentication = &types.AuthStep{
 				Location: types.Location{
-					File:     fn.File,
+					File:     relPath(prog.RootDir, fn.File),
 					Line:     fn.Line,
 					Function: fn.Name,
 					Package:  fn.Package,
@@ -182,7 +183,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 			fn := authzSteps[0].fn
 			flow.Authorization = &types.AuthStep{
 				Location: types.Location{
-					File:     fn.File,
+					File:     relPath(prog.RootDir, fn.File),
 					Line:     fn.Line,
 					Function: fn.Name,
 					Package:  fn.Package,
@@ -193,7 +194,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 		for _, vs := range validatorSteps {
 			flow.Validators = append(flow.Validators, types.ValidatorInfo{
 				Location: types.Location{
-					File:     vs.fn.File,
+					File:     relPath(prog.RootDir, vs.fn.File),
 					Line:     vs.fn.Line,
 					Function: vs.fn.Name,
 					Package:  vs.fn.Package,
@@ -204,7 +205,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 
 		for _, ss := range sessionSteps {
 			flow.Sessions = append(flow.Sessions, types.Location{
-				File:     ss.fn.File,
+				File:     relPath(prog.RootDir, ss.fn.File),
 				Line:     ss.fn.Line,
 				Function: ss.fn.Name,
 				Package:  ss.fn.Package,
@@ -649,6 +650,19 @@ func inferValidatorKind(name string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// relPath computes a relative path from rootDir. If rootDir is empty or
+// the computation fails, the original path is returned.
+func relPath(rootDir, filePath string) string {
+	if rootDir == "" {
+		return filePath
+	}
+	rel, err := filepath.Rel(rootDir, filePath)
+	if err != nil {
+		return filePath
+	}
+	return rel
 }
 
 func determinePosture(flow *types.AuthFlow) string {

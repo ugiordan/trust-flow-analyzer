@@ -79,7 +79,7 @@ func readPythonProjectName(dir string) string {
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "name") && strings.Contains(line, "=") {
+		if isExactKeyLine(line, "name") && strings.Contains(line, "=") {
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 {
 				name := strings.TrimSpace(parts[1])
@@ -114,7 +114,7 @@ func readCargoName(dir string) string {
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "name") && strings.Contains(line, "=") {
+		if isExactKeyLine(line, "name") && strings.Contains(line, "=") {
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 {
 				name := strings.TrimSpace(parts[1])
@@ -126,4 +126,18 @@ func readCargoName(dir string) string {
 		}
 	}
 	return filepath.Base(dir)
+}
+
+// isExactKeyLine checks that a TOML line starts with the exact key name
+// followed by a separator (space, tab, or '='), avoiding false matches
+// on keys like "namespace" when looking for "name".
+func isExactKeyLine(line, key string) bool {
+	if !strings.HasPrefix(line, key) {
+		return false
+	}
+	if len(line) == len(key) {
+		return true
+	}
+	next := line[len(key)]
+	return next == ' ' || next == '=' || next == '\t'
 }

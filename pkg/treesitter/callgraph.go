@@ -58,9 +58,13 @@ func BuildCallGraph(functions []ir.FunctionInfo, callSites []ir.CallSiteInfo) (c
 		var matched []ir.FunctionInfo
 
 		if !isQualified {
-			// Unqualified call (e.g., "do_stuff"): match within same directory only
+			// Unqualified call (e.g., "do_stuff"): match within same directory first
 			if pkgFns, ok := pkgIndex[csDir]; ok {
 				matched = pkgFns[shortName]
+			}
+			// Fall back to cross-directory when no same-directory match found
+			if len(matched) == 0 {
+				matched = fnByName[shortName]
 			}
 		} else {
 			// Qualified call (e.g., "auth.verify_token" or "self.process"):

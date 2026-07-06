@@ -111,6 +111,7 @@ func (w *pythonWalker) walk(node *sitter.Node) {
 		w.extractRaise(node)
 	case "try_statement":
 		w.extractTryExcept(node)
+		return // children handled inside
 	}
 
 	for i := 0; i < int(node.ChildCount()); i++ {

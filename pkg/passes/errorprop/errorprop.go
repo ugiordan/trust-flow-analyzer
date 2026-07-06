@@ -2,6 +2,7 @@ package errorprop
 
 import (
 	"bufio"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -68,7 +69,7 @@ func (p *Pass) runGo(ctx *passes.Context) error {
 var (
 	raisePattern      = regexp.MustCompile(`^\s*raise\s+`)
 	emptyExceptPattern = regexp.MustCompile(`^\s*except\s*(?:\w+\s*)?:\s*$`)
-	passPattern        = regexp.MustCompile(`^\s*pass\s*$`)
+	passPattern        = regexp.MustCompile(`^\s*pass\s*(#.*)?$`)
 )
 
 // runGeneric scans source files for error handling patterns using regex.
@@ -77,9 +78,12 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 	prog := ctx.Program
 
 	for filePath, content := range prog.Files {
+		relPath := relativePath(prog.RootDir, filePath)
 		scanner := bufio.NewScanner(strings.NewReader(string(content)))
 		lineNum := 0
 		inEmptyExcept := false
+		exceptLine := 0
+		exceptIndent := 0
 
 		for scanner.Scan() {
 			lineNum++
@@ -89,11 +93,11 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 			if raisePattern.MatchString(line) {
 				ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
 					Origin: ttypes.Location{
-						File: filePath,
+						File: relPath,
 						Line: lineNum,
 					},
 					Handlers: []ttypes.ErrorHandler{{
-						Location: ttypes.Location{File: filePath, Line: lineNum},
+						Location: ttypes.Location{File: relPath, Line: lineNum},
 						Kind:     "RAISE",
 					}},
 					Dropped:  false,
@@ -104,16 +108,46 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 			// Detect empty except blocks (except: followed by pass or nothing)
 			if emptyExceptPattern.MatchString(line) {
 				inEmptyExcept = true
+				exceptLine = lineNum
+				exceptIndent = indentLevel(line)
 				continue
 			}
 
 			if inEmptyExcept {
 				trimmed := strings.TrimSpace(line)
-				if passPattern.MatchString(line) || trimmed == "..." || trimmed == "" {
+				// Skip blank lines and comment-only lines inside the except body
+				if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+				// Check if indentation decreased (left the except block)
+				currentIndent := indentLevel(line)
+				if currentIndent <= exceptIndent {
+					// Exited the except block without finding a real statement.
+					// This means the except body was empty.
 					ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
 						Origin: ttypes.Location{
-							File: filePath,
-							Line: lineNum - 1, // the except line
+							File: relPath,
+							Line: exceptLine,
+						},
+						Handlers: nil,
+						Dropped:  true,
+						FailMode: "OPEN",
+					})
+					inEmptyExcept = false
+					// Re-check this line for new except/raise patterns
+					if emptyExceptPattern.MatchString(line) {
+						inEmptyExcept = true
+						exceptLine = lineNum
+						exceptIndent = indentLevel(line)
+					}
+					continue
+				}
+				// Still inside except body, check if it's pass or ellipsis
+				if passPattern.MatchString(line) || trimmed == "..." {
+					ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
+						Origin: ttypes.Location{
+							File: relPath,
+							Line: exceptLine,
 						},
 						Handlers: nil,
 						Dropped:  true,
@@ -122,6 +156,19 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 				}
 				inEmptyExcept = false
 			}
+		}
+
+		// Handle case where file ends while inside an empty except block
+		if inEmptyExcept {
+			ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
+				Origin: ttypes.Location{
+					File: relPath,
+					Line: exceptLine,
+				},
+				Handlers: nil,
+				Dropped:  true,
+				FailMode: "OPEN",
+			})
 		}
 	}
 
@@ -377,5 +424,23 @@ func packagePath(fn *ssa.Function) string {
 		return fn.Package().Pkg.Path()
 	}
 	return ""
+}
+
+// indentLevel returns the number of leading whitespace characters in a line.
+func indentLevel(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " \t"))
+}
+
+// relativePath computes a relative path from rootDir. If rootDir is empty or
+// the computation fails, the original path is returned.
+func relativePath(rootDir, filePath string) string {
+	if rootDir == "" {
+		return filePath
+	}
+	rel, err := filepath.Rel(rootDir, filePath)
+	if err != nil {
+		return filePath
+	}
+	return rel
 }
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"go/ast"
 	"go/token"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -56,6 +57,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 	prog := ctx.Program
 
 	for filePath, content := range prog.Files {
+		relFile := relPath(prog.RootDir, filePath)
 		scanner := bufio.NewScanner(strings.NewReader(string(content)))
 		lineNum := 0
 		for scanner.Scan() {
@@ -65,7 +67,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 			for _, match := range matches {
 				ctx.Result.SecretExposures = append(ctx.Result.SecretExposures, types.SecretExposure{
 					Location: types.Location{
-						File: filePath,
+						File: relFile,
 						Line: lineNum,
 					},
 					Pattern:     "ENV_IN_ARGS",
@@ -85,6 +87,19 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 	})
 
 	return nil
+}
+
+// relPath computes a relative path from rootDir. If rootDir is empty or
+// the computation fails, the original path is returned.
+func relPath(rootDir, filePath string) string {
+	if rootDir == "" {
+		return filePath
+	}
+	rel, err := filepath.Rel(rootDir, filePath)
+	if err != nil {
+		return filePath
+	}
+	return rel
 }
 
 func (p *Pass) analyzePackage(pkg *packages.Package, result *types.AnalysisResult, fset *token.FileSet, modulePath string) {
