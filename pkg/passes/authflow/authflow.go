@@ -8,6 +8,7 @@ import (
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/ir"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/types"
@@ -19,6 +20,7 @@ type authPattern struct {
 }
 
 var patterns = []authPattern{
+	// CamelCase (Go, TypeScript, Rust)
 	{"Authenticate", "authn"},
 	{"ValidateToken", "authn"},
 	{"TokenReview", "authn"},
@@ -40,6 +42,24 @@ var patterns = []authPattern{
 	{"createSession", "session"},
 	{"GetSession", "session"},
 	{"getAuthenticatedSession", "session"},
+
+	// snake_case (Python)
+	{"authenticate", "authn"},
+	{"validate_token", "authn"},
+	{"verify_token", "authn"},
+	{"check_token", "authn"},
+
+	{"authorize", "authz"},
+	{"check_access", "authz"},
+	{"is_allowed", "authz"},
+	{"check_permission", "authz"},
+
+	{"validate_email", "validator"},
+	{"check_groups", "validator"},
+	{"validate_domain", "validator"},
+
+	{"create_session", "session"},
+	{"get_session", "session"},
 }
 
 // Pass implements the auth flow analysis.
@@ -48,17 +68,25 @@ type Pass struct{}
 func (p *Pass) Name() string { return "authflow" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
-	prog := ctx.Program
+	if ctx.Program.GoSSA != nil {
+		return p.runGo(ctx)
+	}
+	return p.runGeneric(ctx)
+}
 
-	authFuncs := findAuthFunctions(prog)
-	entries := findEntryPoints(prog)
+func (p *Pass) runGo(ctx *passes.Context) error {
+	goSSA := ctx.Program.GoSSA
+	modulePath := ctx.Program.ModulePath
+
+	authFuncs := findAuthFunctions(goSSA, modulePath)
+	entries := findEntryPoints(goSSA, modulePath)
 
 	if len(entries) == 0 || len(authFuncs) == 0 {
 		return nil
 	}
 
 	for _, entry := range entries {
-		flow := traceAuthFlow(prog, entry, authFuncs)
+		flow := traceAuthFlow(goSSA, modulePath, entry, authFuncs)
 		if flow != nil {
 			ctx.Result.AuthFlows = append(ctx.Result.AuthFlows, *flow)
 		}
@@ -71,17 +99,158 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	return nil
 }
 
+// runGeneric uses the heuristic IR call graph for non-Go languages.
+func (p *Pass) runGeneric(ctx *passes.Context) error {
+	prog := ctx.Program
+
+	// Find entry points by decorator patterns (e.g. @app.route, @router.get)
+	var entryFuncs []ir.FunctionInfo
+	for _, fn := range prog.Functions {
+		if isGenericEntryPoint(fn) {
+			entryFuncs = append(entryFuncs, fn)
+		}
+	}
+
+	// Find auth functions by name patterns
+	type genericClassified struct {
+		fn   ir.FunctionInfo
+		kind string
+	}
+	var authFuncs []genericClassified
+	for _, fn := range prog.Functions {
+		for _, pat := range patterns {
+			if strings.Contains(fn.Name, pat.substring) {
+				authFuncs = append(authFuncs, genericClassified{fn: fn, kind: pat.kind})
+				break
+			}
+		}
+	}
+
+	if len(entryFuncs) == 0 || len(authFuncs) == 0 {
+		return nil
+	}
+
+	for _, entry := range entryFuncs {
+		reachable := prog.ForwardReachable(entry.ID)
+
+		var authnSteps, authzSteps []genericClassified
+		var validatorSteps, sessionSteps []genericClassified
+
+		for _, af := range authFuncs {
+			if !reachable[af.fn.ID] {
+				continue
+			}
+			switch af.kind {
+			case "authn":
+				authnSteps = append(authnSteps, af)
+			case "authz":
+				authzSteps = append(authzSteps, af)
+			case "validator":
+				validatorSteps = append(validatorSteps, af)
+			case "session":
+				sessionSteps = append(sessionSteps, af)
+			}
+		}
+
+		if len(authnSteps) == 0 && len(authzSteps) == 0 {
+			continue
+		}
+
+		flow := &types.AuthFlow{
+			Name: entry.Name,
+			Entry: types.Location{
+				File:     entry.File,
+				Line:     entry.Line,
+				Function: entry.Name,
+				Package:  entry.Package,
+			},
+		}
+
+		if len(authnSteps) > 0 {
+			fn := authnSteps[0].fn
+			flow.Authentication = &types.AuthStep{
+				Location: types.Location{
+					File:     fn.File,
+					Line:     fn.Line,
+					Function: fn.Name,
+					Package:  fn.Package,
+				},
+			}
+		}
+
+		if len(authzSteps) > 0 {
+			fn := authzSteps[0].fn
+			flow.Authorization = &types.AuthStep{
+				Location: types.Location{
+					File:     fn.File,
+					Line:     fn.Line,
+					Function: fn.Name,
+					Package:  fn.Package,
+				},
+			}
+		}
+
+		for _, vs := range validatorSteps {
+			flow.Validators = append(flow.Validators, types.ValidatorInfo{
+				Location: types.Location{
+					File:     vs.fn.File,
+					Line:     vs.fn.Line,
+					Function: vs.fn.Name,
+					Package:  vs.fn.Package,
+				},
+				Kind: inferValidatorKind(vs.fn.Name),
+			})
+		}
+
+		for _, ss := range sessionSteps {
+			flow.Sessions = append(flow.Sessions, types.Location{
+				File:     ss.fn.File,
+				Line:     ss.fn.Line,
+				Function: ss.fn.Name,
+				Package:  ss.fn.Package,
+			})
+		}
+
+		flow.Posture = determinePosture(flow)
+		ctx.Result.AuthFlows = append(ctx.Result.AuthFlows, *flow)
+	}
+
+	sort.Slice(ctx.Result.AuthFlows, func(i, j int) bool {
+		return ctx.Result.AuthFlows[i].Name < ctx.Result.AuthFlows[j].Name
+	})
+
+	return nil
+}
+
+// isGenericEntryPoint checks whether a function looks like an HTTP entry point
+// in a non-Go language (e.g. Python Flask/FastAPI routes).
+func isGenericEntryPoint(fn ir.FunctionInfo) bool {
+	routePatterns := []string{
+		"@app.route", "@app.get", "@app.post", "@app.put", "@app.delete", "@app.patch",
+		"@router.get", "@router.post", "@router.put", "@router.delete", "@router.patch",
+		"@blueprint.route",
+	}
+	for _, dec := range fn.Decorators {
+		for _, pat := range routePatterns {
+			if strings.Contains(dec, pat) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type classifiedFunc struct {
 	fn   *ssa.Function
 	kind string
 }
 
-func findAuthFunctions(prog *loader.Program) []classifiedFunc {
+func findAuthFunctions(goSSA *ir.GoSSAData, modulePath string) []classifiedFunc {
 	var result []classifiedFunc
 	seen := make(map[*ssa.Function]bool)
 
-	for fn := range prog.CallGraph.Nodes {
-		if fn == nil || seen[fn] || !prog.IsModuleFunc(fn) {
+	for fn := range goSSA.CallGraph.Nodes {
+		if fn == nil || seen[fn] || !isModuleFunc(fn, modulePath) {
 			continue
 		}
 		seen[fn] = true
@@ -102,12 +271,20 @@ func findAuthFunctions(prog *loader.Program) []classifiedFunc {
 	return result
 }
 
-func findEntryPoints(prog *loader.Program) []*ssa.Function {
+// isModuleFunc returns true if the function belongs to the target module.
+func isModuleFunc(fn *ssa.Function, modulePath string) bool {
+	if fn == nil || fn.Package() == nil {
+		return false
+	}
+	return strings.HasPrefix(fn.Package().Pkg.Path(), modulePath)
+}
+
+func findEntryPoints(goSSA *ir.GoSSAData, modulePath string) []*ssa.Function {
 	var entries []*ssa.Function
 	seen := make(map[*ssa.Function]bool)
 
-	for fn := range prog.CallGraph.Nodes {
-		if fn == nil || seen[fn] || !prog.IsModuleFunc(fn) {
+	for fn := range goSSA.CallGraph.Nodes {
+		if fn == nil || seen[fn] || !isModuleFunc(fn, modulePath) {
 			continue
 		}
 		seen[fn] = true
@@ -276,8 +453,8 @@ func hasHTTPParams(sig *gotypes.Signature) bool {
 	return hasWriter && hasRequest
 }
 
-func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classifiedFunc) *types.AuthFlow {
-	reachable := forwardReachable(prog.CallGraph, entry)
+func traceAuthFlow(goSSA *ir.GoSSAData, modulePath string, entry *ssa.Function, authFuncs []classifiedFunc) *types.AuthFlow {
+	reachable := forwardReachable(goSSA.CallGraph, entry)
 
 	var authnSteps []classifiedFunc
 	var authzSteps []classifiedFunc
@@ -304,11 +481,11 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 		return nil
 	}
 
-	entryFile, entryLine := loader.FunctionLocation(prog.Fset, entry)
+	entryFile, entryLine := loader.FunctionLocation(goSSA.Fset, entry)
 	flow := &types.AuthFlow{
 		Name: deriveFlowName(entry),
 		Entry: types.Location{
-			File:     loader.RelativePath(entryFile, prog.ModulePath),
+			File:     loader.RelativePath(entryFile, modulePath),
 			Line:     entryLine,
 			Function: entry.Name(),
 			Package:  packagePath(entry),
@@ -319,10 +496,10 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 	// In the future, additional steps could be surfaced in the output.
 	if len(authnSteps) > 0 {
 		fn := authnSteps[0].fn
-		file, line := loader.FunctionLocation(prog.Fset, fn)
+		file, line := loader.FunctionLocation(goSSA.Fset, fn)
 		flow.Authentication = &types.AuthStep{
 			Location: types.Location{
-				File:     loader.RelativePath(file, prog.ModulePath),
+				File:     loader.RelativePath(file, modulePath),
 				Line:     line,
 				Function: fn.Name(),
 				Package:  packagePath(fn),
@@ -330,10 +507,10 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 		}
 		// Record additional authn steps as validators so they aren't silently dropped.
 		for _, extra := range authnSteps[1:] {
-			ef, el := loader.FunctionLocation(prog.Fset, extra.fn)
+			ef, el := loader.FunctionLocation(goSSA.Fset, extra.fn)
 			flow.Validators = append(flow.Validators, types.ValidatorInfo{
 				Location: types.Location{
-					File:     loader.RelativePath(ef, prog.ModulePath),
+					File:     loader.RelativePath(ef, modulePath),
 					Line:     el,
 					Function: extra.fn.Name(),
 					Package:  packagePath(extra.fn),
@@ -346,20 +523,20 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 	// Use the first authz step as the primary, record extras as validators.
 	if len(authzSteps) > 0 {
 		fn := authzSteps[0].fn
-		file, line := loader.FunctionLocation(prog.Fset, fn)
+		file, line := loader.FunctionLocation(goSSA.Fset, fn)
 		flow.Authorization = &types.AuthStep{
 			Location: types.Location{
-				File:     loader.RelativePath(file, prog.ModulePath),
+				File:     loader.RelativePath(file, modulePath),
 				Line:     line,
 				Function: fn.Name(),
 				Package:  packagePath(fn),
 			},
 		}
 		for _, extra := range authzSteps[1:] {
-			ef, el := loader.FunctionLocation(prog.Fset, extra.fn)
+			ef, el := loader.FunctionLocation(goSSA.Fset, extra.fn)
 			flow.Validators = append(flow.Validators, types.ValidatorInfo{
 				Location: types.Location{
-					File:     loader.RelativePath(ef, prog.ModulePath),
+					File:     loader.RelativePath(ef, modulePath),
 					Line:     el,
 					Function: extra.fn.Name(),
 					Package:  packagePath(extra.fn),
@@ -370,10 +547,10 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 	}
 
 	for _, vs := range validatorSteps {
-		file, line := loader.FunctionLocation(prog.Fset, vs.fn)
+		file, line := loader.FunctionLocation(goSSA.Fset, vs.fn)
 		flow.Validators = append(flow.Validators, types.ValidatorInfo{
 			Location: types.Location{
-				File:     loader.RelativePath(file, prog.ModulePath),
+				File:     loader.RelativePath(file, modulePath),
 				Line:     line,
 				Function: vs.fn.Name(),
 				Package:  packagePath(vs.fn),
@@ -383,9 +560,9 @@ func traceAuthFlow(prog *loader.Program, entry *ssa.Function, authFuncs []classi
 	}
 
 	for _, ss := range sessionSteps {
-		file, line := loader.FunctionLocation(prog.Fset, ss.fn)
+		file, line := loader.FunctionLocation(goSSA.Fset, ss.fn)
 		flow.Sessions = append(flow.Sessions, types.Location{
-			File:     loader.RelativePath(file, prog.ModulePath),
+			File:     loader.RelativePath(file, modulePath),
 			Line:     line,
 			Function: ss.fn.Name(),
 			Package:  packagePath(ss.fn),

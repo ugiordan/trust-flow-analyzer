@@ -4,9 +4,11 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strings"
 
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/ir"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	ttypes "github.com/ugiordan/trust-flow-analyzer/pkg/types"
@@ -18,10 +20,18 @@ type Pass struct{}
 func (p *Pass) Name() string { return "contract" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
-	prog := ctx.Program
+	if ctx.Program.GoSSA != nil {
+		return p.runGo(ctx)
+	}
+	return p.runGeneric(ctx)
+}
 
-	for _, fn := range loader.SortedModuleFunctions(prog) {
-		c := analyzeContract(prog, fn)
+func (p *Pass) runGo(ctx *passes.Context) error {
+	goSSA := ctx.Program.GoSSA
+	modulePath := ctx.Program.ModulePath
+
+	for _, fn := range sortedModuleFunctions(goSSA, modulePath) {
+		c := analyzeContract(goSSA, modulePath, fn)
 		if c != nil && len(c.Violations) > 0 {
 			ctx.Result.Contracts = append(ctx.Result.Contracts, *c)
 		}
@@ -38,7 +48,36 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	return nil
 }
 
-func analyzeContract(prog *loader.Program, fn *ssa.Function) *ttypes.Contract {
+// runGeneric is a no-op for non-Go languages in Phase 1.
+// Contract analysis requires SSA-level type information.
+func (p *Pass) runGeneric(_ *passes.Context) error {
+	return nil
+}
+
+// sortedModuleFunctions returns module functions sorted by name.
+func sortedModuleFunctions(goSSA *ir.GoSSAData, modulePath string) []*ssa.Function {
+	seen := make(map[*ssa.Function]bool)
+	var fns []*ssa.Function
+	for fn := range goSSA.CallGraph.Nodes {
+		if fn != nil && !seen[fn] && isModuleFunc(fn, modulePath) {
+			seen[fn] = true
+			fns = append(fns, fn)
+		}
+	}
+	sort.Slice(fns, func(i, j int) bool {
+		return fns[i].String() < fns[j].String()
+	})
+	return fns
+}
+
+func isModuleFunc(fn *ssa.Function, modulePath string) bool {
+	if fn == nil || fn.Package() == nil {
+		return false
+	}
+	return strings.HasPrefix(fn.Package().Pkg.Path(), modulePath)
+}
+
+func analyzeContract(goSSA *ir.GoSSAData, modulePath string, fn *ssa.Function) *ttypes.Contract {
 	sig := fn.Signature
 	results := sig.Results()
 	if results == nil || results.Len() == 0 {
@@ -67,10 +106,10 @@ func analyzeContract(prog *loader.Program, fn *ssa.Function) *ttypes.Contract {
 		return nil
 	}
 
-	file, line := loader.FunctionLocation(prog.Fset, fn)
+	file, line := loader.FunctionLocation(goSSA.Fset, fn)
 	contract := &ttypes.Contract{
 		Function: ttypes.Location{
-			File:     loader.RelativePath(file, prog.ModulePath),
+			File:     loader.RelativePath(file, modulePath),
 			Line:     line,
 			Function: fn.Name(),
 			Package:  packagePath(fn),
@@ -78,7 +117,7 @@ func analyzeContract(prog *loader.Program, fn *ssa.Function) *ttypes.Contract {
 		Returns: returns,
 	}
 
-	node := prog.CallGraph.Nodes[fn]
+	node := goSSA.CallGraph.Nodes[fn]
 	if node == nil {
 		return contract
 	}
@@ -93,7 +132,7 @@ func analyzeContract(prog *loader.Program, fn *ssa.Function) *ttypes.Contract {
 
 		// Skip callers outside the analyzed module. External callers (stdlib,
 		// dependencies) are not actionable findings for the project under analysis.
-		if !prog.IsModuleFunc(callerFn) {
+		if !isModuleFunc(callerFn, modulePath) {
 			continue
 		}
 
@@ -101,14 +140,14 @@ func analyzeContract(prog *loader.Program, fn *ssa.Function) *ttypes.Contract {
 			continue
 		}
 
-		violations := checkCallerHandling(prog, callerFn, edge.Site, fn, prog.ModulePath)
+		violations := checkCallerHandling(goSSA, callerFn, edge.Site, fn, modulePath)
 		contract.Violations = append(contract.Violations, violations...)
 	}
 
 	return contract
 }
 
-func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.CallInstruction, callee *ssa.Function, modulePath string) []ttypes.ContractViolation {
+func checkCallerHandling(goSSA *ir.GoSSAData, caller *ssa.Function, site ssa.CallInstruction, callee *ssa.Function, modulePath string) []ttypes.ContractViolation {
 	var violations []ttypes.ContractViolation
 
 	sig := callee.Signature
@@ -133,7 +172,7 @@ func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.Ca
 	if !ok {
 		// The call is used as a statement (return values discarded entirely).
 		// If the callee returns an error, this is an unchecked error.
-		file, line := callerLocation(prog.Fset, caller, site)
+		file, line := callerLocation(goSSA.Fset, caller, site)
 		for i := 0; i < results.Len(); i++ {
 			if isErrorType(results.At(i).Type()) {
 				violations = append(violations, ttypes.ContractViolation{
@@ -160,7 +199,7 @@ func checkCallerHandling(prog *loader.Program, caller *ssa.Function, site ssa.Ca
 		}
 
 		if !isExtractUsed(extract, i, callValue, results.Len()) {
-			file, line := callerLocation(prog.Fset, caller, site)
+			file, line := callerLocation(goSSA.Fset, caller, site)
 			violations = append(violations, ttypes.ContractViolation{
 				Caller: ttypes.Location{
 					File:     loader.RelativePath(file, modulePath),

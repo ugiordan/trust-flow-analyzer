@@ -1,8 +1,10 @@
 package defaults
 
 import (
+	"bufio"
 	"go/ast"
 	"go/token"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -20,8 +22,77 @@ type Pass struct{}
 func (p *Pass) Name() string { return "defaults" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
-	for _, pkg := range ctx.Program.Packages {
-		p.analyzePackage(pkg, ctx.Platform, ctx.Result, ctx.Program.Fset, ctx.Program.ModulePath)
+	if ctx.Program.GoSSA != nil {
+		return p.runGo(ctx)
+	}
+	return p.runGeneric(ctx)
+}
+
+func (p *Pass) runGo(ctx *passes.Context) error {
+	goSSA := ctx.Program.GoSSA
+	modulePath := ctx.Program.ModulePath
+
+	for _, pkg := range goSSA.Packages {
+		p.analyzePackage(pkg, ctx.Platform, ctx.Result, goSSA.Fset, modulePath)
+	}
+
+	ctx.Result.Defaults = deduplicateDefaults(ctx.Result.Defaults)
+
+	sort.Slice(ctx.Result.Defaults, func(i, j int) bool {
+		return ctx.Result.Defaults[i].Field < ctx.Result.Defaults[j].Field
+	})
+
+	return nil
+}
+
+// configPatterns matches common configuration variable assignments in non-Go languages.
+var configPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(?:DEBUG|TESTING)\s*[=:]\s*(?:True|true|1)`),
+	regexp.MustCompile(`(?i)(?:SECRET_KEY|API_KEY|PASSWORD|TOKEN)\s*[=:]\s*["']([^"']+)["']`),
+	regexp.MustCompile(`(?i)(?:ALLOWED_HOSTS|CORS_ORIGIN)\s*[=:]\s*\[?\s*["']\*["']`),
+	regexp.MustCompile(`(?i)(?:SSL|TLS|HTTPS)\s*[=:]\s*(?:False|false|0|disabled)`),
+}
+
+// runGeneric scans file content for configuration patterns in non-Go languages.
+func (p *Pass) runGeneric(ctx *passes.Context) error {
+	prog := ctx.Program
+
+	for filePath, content := range prog.Files {
+		scanner := bufio.NewScanner(strings.NewReader(string(content)))
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			line := scanner.Text()
+			for _, pat := range configPatterns {
+				if pat.MatchString(line) {
+					field := strings.TrimSpace(line)
+					// Truncate long lines for display
+					if len(field) > 80 {
+						field = field[:80] + "..."
+					}
+
+					sem, known := ctx.Platform.Lookup(field)
+					if !known {
+						sem = platform.FieldSemantics{
+							Field:          field,
+							EmptyMeaning:   "potential security-relevant configuration",
+							Permissiveness: "PERMISSIVE",
+						}
+					}
+
+					ctx.Result.Defaults = append(ctx.Result.Defaults, types.DefaultValue{
+						Field: field,
+						Location: types.Location{
+							File: filePath,
+							Line: lineNum,
+						},
+						LibraryDefault:  field,
+						PlatformMeaning: sem.EmptyMeaning,
+						Permissiveness:  sem.Permissiveness,
+					})
+				}
+			}
+		}
 	}
 
 	ctx.Result.Defaults = deduplicateDefaults(ctx.Result.Defaults)

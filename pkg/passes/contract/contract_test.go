@@ -19,9 +19,9 @@ func loadFixture(t *testing.T) *passes.Context {
 	if err != nil {
 		t.Fatalf("abs path: %v", err)
 	}
-	prog, err := loader.Load(absDir, os.Stderr)
+	prog, err := loader.LoadGo(absDir, os.Stderr)
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadGo: %v", err)
 	}
 	return &passes.Context{
 		Program:  prog,

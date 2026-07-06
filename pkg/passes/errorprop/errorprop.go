@@ -1,11 +1,14 @@
 package errorprop
 
 import (
+	"bufio"
+	"regexp"
 	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/ir"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	ttypes "github.com/ugiordan/trust-flow-analyzer/pkg/types"
@@ -32,10 +35,18 @@ type Pass struct{}
 func (p *Pass) Name() string { return "errorprop" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
-	prog := ctx.Program
+	if ctx.Program.GoSSA != nil {
+		return p.runGo(ctx)
+	}
+	return p.runGeneric(ctx)
+}
 
-	for _, fn := range loader.SortedModuleFunctions(prog) {
-		paths := analyzeErrorPaths(prog, fn)
+func (p *Pass) runGo(ctx *passes.Context) error {
+	goSSA := ctx.Program.GoSSA
+	modulePath := ctx.Program.ModulePath
+
+	for _, fn := range sortedModuleFunctions(goSSA, modulePath) {
+		paths := analyzeErrorPaths(goSSA, modulePath, fn)
 		ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, paths...)
 	}
 
@@ -53,7 +64,101 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	return nil
 }
 
-func analyzeErrorPaths(prog *loader.Program, fn *ssa.Function) []ttypes.ErrorPath {
+// Python error patterns for regex-based scanning.
+var (
+	raisePattern      = regexp.MustCompile(`^\s*raise\s+`)
+	emptyExceptPattern = regexp.MustCompile(`^\s*except\s*(?:\w+\s*)?:\s*$`)
+	passPattern        = regexp.MustCompile(`^\s*pass\s*$`)
+)
+
+// runGeneric scans source files for error handling patterns using regex.
+// For Python: finds "raise" statements and "except:" with empty bodies.
+func (p *Pass) runGeneric(ctx *passes.Context) error {
+	prog := ctx.Program
+
+	for filePath, content := range prog.Files {
+		scanner := bufio.NewScanner(strings.NewReader(string(content)))
+		lineNum := 0
+		inEmptyExcept := false
+
+		for scanner.Scan() {
+			lineNum++
+			line := scanner.Text()
+
+			// Detect raise statements
+			if raisePattern.MatchString(line) {
+				ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
+					Origin: ttypes.Location{
+						File: filePath,
+						Line: lineNum,
+					},
+					Handlers: []ttypes.ErrorHandler{{
+						Location: ttypes.Location{File: filePath, Line: lineNum},
+						Kind:     "RAISE",
+					}},
+					Dropped:  false,
+					FailMode: "CLOSED",
+				})
+			}
+
+			// Detect empty except blocks (except: followed by pass or nothing)
+			if emptyExceptPattern.MatchString(line) {
+				inEmptyExcept = true
+				continue
+			}
+
+			if inEmptyExcept {
+				trimmed := strings.TrimSpace(line)
+				if passPattern.MatchString(line) || trimmed == "..." || trimmed == "" {
+					ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
+						Origin: ttypes.Location{
+							File: filePath,
+							Line: lineNum - 1, // the except line
+						},
+						Handlers: nil,
+						Dropped:  true,
+						FailMode: "OPEN",
+					})
+				}
+				inEmptyExcept = false
+			}
+		}
+	}
+
+	sort.Slice(ctx.Result.ErrorPaths, func(i, j int) bool {
+		oi, oj := ctx.Result.ErrorPaths[i].Origin, ctx.Result.ErrorPaths[j].Origin
+		if oi.File != oj.File {
+			return oi.File < oj.File
+		}
+		return oi.Line < oj.Line
+	})
+
+	return nil
+}
+
+func sortedModuleFunctions(goSSA *ir.GoSSAData, modulePath string) []*ssa.Function {
+	seen := make(map[*ssa.Function]bool)
+	var fns []*ssa.Function
+	for fn := range goSSA.CallGraph.Nodes {
+		if fn != nil && !seen[fn] && isModuleFunc(fn, modulePath) {
+			seen[fn] = true
+			fns = append(fns, fn)
+		}
+	}
+	sort.Slice(fns, func(i, j int) bool {
+		return fns[i].String() < fns[j].String()
+	})
+	return fns
+}
+
+func isModuleFunc(fn *ssa.Function, modulePath string) bool {
+	if fn == nil || fn.Package() == nil {
+		return false
+	}
+	return strings.HasPrefix(fn.Package().Pkg.Path(), modulePath)
+}
+
+func analyzeErrorPaths(goSSA *ir.GoSSAData, modulePath string, fn *ssa.Function) []ttypes.ErrorPath {
 	if len(fn.Blocks) == 0 {
 		return nil
 	}
@@ -71,15 +176,15 @@ func analyzeErrorPaths(prog *loader.Program, fn *ssa.Function) []ttypes.ErrorPat
 				continue
 			}
 
-			pos := prog.Fset.Position(call.Pos())
+			pos := goSSA.Fset.Position(call.Pos())
 			origin := ttypes.Location{
-				File:     loader.RelativePath(pos.Filename, prog.ModulePath),
+				File:     loader.RelativePath(pos.Filename, modulePath),
 				Line:     pos.Line,
 				Function: fn.Name(),
 				Package:  packagePath(fn),
 			}
 
-			handlers, dropped := traceErrorValue(prog, call, fn)
+			handlers, dropped := traceErrorValue(goSSA, modulePath, call, fn)
 
 			path := ttypes.ErrorPath{
 				Origin:   origin,
@@ -115,7 +220,7 @@ func isErrorCreation(call *ssa.Call) bool {
 	return false
 }
 
-func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function) ([]ttypes.ErrorHandler, bool) {
+func traceErrorValue(goSSA *ir.GoSSAData, modulePath string, errorVal ssa.Value, fn *ssa.Function) ([]ttypes.ErrorHandler, bool) {
 	var handlers []ttypes.ErrorHandler
 	dropped := true
 
@@ -125,9 +230,9 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 	}
 
 	for _, ref := range *refs {
-		pos := prog.Fset.Position(ref.Pos())
+		pos := goSSA.Fset.Position(ref.Pos())
 		loc := ttypes.Location{
-			File:     loader.RelativePath(pos.Filename, prog.ModulePath),
+			File:     loader.RelativePath(pos.Filename, modulePath),
 			Line:     pos.Line,
 			Function: fn.Name(),
 			Package:  packagePath(fn),
@@ -169,10 +274,10 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 					if subCall, ok := subRef.(*ssa.Call); ok {
 						callee := subCall.Call.StaticCallee()
 						if callee != nil && isLoggingFunction(callee.Name()) {
-							subPos := prog.Fset.Position(subCall.Pos())
+							subPos := goSSA.Fset.Position(subCall.Pos())
 							handlers = append(handlers, ttypes.ErrorHandler{
 								Location: ttypes.Location{
-									File:     loader.RelativePath(subPos.Filename, prog.ModulePath),
+									File:     loader.RelativePath(subPos.Filename, modulePath),
 									Line:     subPos.Line,
 									Function: fn.Name(),
 									Package:  packagePath(fn),
@@ -197,10 +302,10 @@ func traceErrorValue(prog *loader.Program, errorVal ssa.Value, fn *ssa.Function)
 				if addrRefs != nil {
 					for _, addrRef := range *addrRefs {
 						if ret, ok := addrRef.(*ssa.Return); ok {
-							retPos := prog.Fset.Position(ret.Pos())
+							retPos := goSSA.Fset.Position(ret.Pos())
 							handlers = append(handlers, ttypes.ErrorHandler{
 								Location: ttypes.Location{
-									File:     loader.RelativePath(retPos.Filename, prog.ModulePath),
+									File:     loader.RelativePath(retPos.Filename, modulePath),
 									Line:     retPos.Line,
 									Function: fn.Name(),
 									Package:  packagePath(fn),

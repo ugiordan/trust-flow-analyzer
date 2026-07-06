@@ -1,7 +1,7 @@
 package passes
 
 import (
-	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
+	"github.com/ugiordan/trust-flow-analyzer/pkg/ir"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/platform"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/types"
 )
@@ -19,7 +19,7 @@ type ArchContext struct {
 
 // Context holds shared state for all analysis passes.
 type Context struct {
-	Program     *loader.Program
+	Program     *ir.AnalysisProgram
 	Platform    *platform.Knowledge
 	Result      *types.AnalysisResult
 	ArchContext *ArchContext

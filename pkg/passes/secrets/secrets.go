@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"bufio"
 	"go/ast"
 	"go/token"
 	"regexp"
@@ -24,8 +25,55 @@ type Pass struct{}
 func (p *Pass) Name() string { return "secrets" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
-	for _, pkg := range ctx.Program.Packages {
-		p.analyzePackage(pkg, ctx.Result, ctx.Program.Fset, ctx.Program.ModulePath)
+	if ctx.Program.GoSSA != nil {
+		return p.runGo(ctx)
+	}
+	return p.runGeneric(ctx)
+}
+
+func (p *Pass) runGo(ctx *passes.Context) error {
+	goSSA := ctx.Program.GoSSA
+	modulePath := ctx.Program.ModulePath
+
+	for _, pkg := range goSSA.Packages {
+		p.analyzePackage(pkg, ctx.Result, goSSA.Fset, modulePath)
+	}
+
+	sort.Slice(ctx.Result.SecretExposures, func(i, j int) bool {
+		ei, ej := ctx.Result.SecretExposures[i], ctx.Result.SecretExposures[j]
+		if ei.Location.File != ej.Location.File {
+			return ei.Location.File < ej.Location.File
+		}
+		return ei.Location.Line < ej.Location.Line
+	})
+
+	return nil
+}
+
+// runGeneric scans source file content for secret patterns regardless of language.
+// The secretEnvPattern regex works on raw file content.
+func (p *Pass) runGeneric(ctx *passes.Context) error {
+	prog := ctx.Program
+
+	for filePath, content := range prog.Files {
+		scanner := bufio.NewScanner(strings.NewReader(string(content)))
+		lineNum := 0
+		for scanner.Scan() {
+			lineNum++
+			line := scanner.Text()
+			matches := secretEnvPattern.FindAllString(line, -1)
+			for _, match := range matches {
+				ctx.Result.SecretExposures = append(ctx.Result.SecretExposures, types.SecretExposure{
+					Location: types.Location{
+						File: filePath,
+						Line: lineNum,
+					},
+					Pattern:     "ENV_IN_ARGS",
+					Description: "Secret env var " + match + " found in source",
+					Field:       "source",
+				})
+			}
+		}
 	}
 
 	sort.Slice(ctx.Result.SecretExposures, func(i, j int) bool {

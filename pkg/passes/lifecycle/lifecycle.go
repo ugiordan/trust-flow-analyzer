@@ -6,6 +6,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/ir"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/types"
@@ -40,11 +41,19 @@ type Pass struct{}
 func (p *Pass) Name() string { return "lifecycle" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
-	prog := ctx.Program
+	if ctx.Program.GoSSA != nil {
+		return p.runGo(ctx)
+	}
+	return p.runGeneric(ctx)
+}
+
+func (p *Pass) runGo(ctx *passes.Context) error {
+	goSSA := ctx.Program.GoSSA
+	modulePath := ctx.Program.ModulePath
 
 	resources := make(map[string]*types.ResourceLifecycle)
 
-	for _, fn := range loader.SortedModuleFunctions(prog) {
+	for _, fn := range sortedModuleFunctions(goSSA, modulePath) {
 		if len(fn.Blocks) == 0 {
 			continue
 		}
@@ -56,7 +65,7 @@ func (p *Pass) Run(ctx *passes.Context) error {
 					continue
 				}
 
-				analyzeCall(prog, fn, call, resources)
+				analyzeCall(goSSA, modulePath, fn, call, resources)
 			}
 		}
 	}
@@ -78,15 +87,43 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	return nil
 }
 
-func analyzeCall(prog *loader.Program, fn *ssa.Function, call *ssa.Call, resources map[string]*types.ResourceLifecycle) {
+// runGeneric is a no-op for non-Go languages in Phase 1.
+// Lifecycle analysis requires Go SSA-level type information for K8s client calls.
+func (p *Pass) runGeneric(_ *passes.Context) error {
+	return nil
+}
+
+func sortedModuleFunctions(goSSA *ir.GoSSAData, modulePath string) []*ssa.Function {
+	seen := make(map[*ssa.Function]bool)
+	var fns []*ssa.Function
+	for fn := range goSSA.CallGraph.Nodes {
+		if fn != nil && !seen[fn] && isModuleFunc(fn, modulePath) {
+			seen[fn] = true
+			fns = append(fns, fn)
+		}
+	}
+	sort.Slice(fns, func(i, j int) bool {
+		return fns[i].String() < fns[j].String()
+	})
+	return fns
+}
+
+func isModuleFunc(fn *ssa.Function, modulePath string) bool {
+	if fn == nil || fn.Package() == nil {
+		return false
+	}
+	return strings.HasPrefix(fn.Package().Pkg.Path(), modulePath)
+}
+
+func analyzeCall(goSSA *ir.GoSSAData, modulePath string, fn *ssa.Function, call *ssa.Call, resources map[string]*types.ResourceLifecycle) {
 	calleeName, isK8s := resolveCallTarget(call)
 	if calleeName == "" {
 		return
 	}
 
-	pos := prog.Fset.Position(call.Pos())
+	pos := goSSA.Fset.Position(call.Pos())
 	loc := types.Location{
-		File:     loader.RelativePath(pos.Filename, prog.ModulePath),
+		File:     loader.RelativePath(pos.Filename, modulePath),
 		Line:     pos.Line,
 		Function: fn.Name(),
 		Package:  packagePath(fn),
