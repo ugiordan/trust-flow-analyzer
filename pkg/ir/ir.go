@@ -17,13 +17,24 @@ type AnalysisProgram struct {
 	ModulePath string
 	RootDir    string
 
-	Functions []FunctionInfo
-	CallSites []CallSiteInfo
-	Callees   map[string][]string // function ID -> callee function IDs
-	Callers   map[string][]string // function ID -> caller function IDs
-	Files     map[string][]byte   // file path -> content
+	Functions     []FunctionInfo
+	CallSites     []CallSiteInfo
+	Callees       map[string][]string // function ID -> callee function IDs
+	Callers       map[string][]string // function ID -> caller function IDs
+	Files         map[string][]byte   // file path -> content
+	ErrorPatterns []ErrorPatternInfo   // error patterns extracted by tree-sitter
 
 	GoSSA *GoSSAData // nil for non-Go
+}
+
+// ErrorPatternInfo describes an error handling pattern extracted from source code
+// by tree-sitter (raise statements, empty except blocks, etc.).
+type ErrorPatternInfo struct {
+	Kind     string // "raise", "empty_except"
+	File     string
+	Line     int
+	FuncName string
+	Message  string
 }
 
 // GoSSAData holds Go-specific SSA data. Only populated for Go repos.

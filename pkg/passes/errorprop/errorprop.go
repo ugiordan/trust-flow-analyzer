@@ -72,9 +72,67 @@ var (
 	passPattern        = regexp.MustCompile(`^\s*pass\s*(#.*)?$`)
 )
 
-// runGeneric scans source files for error handling patterns using regex.
-// For Python: finds "raise" statements and "except:" with empty bodies.
+// runGeneric converts error patterns to ErrorPaths. When tree-sitter error
+// patterns are available (populated by the loader from tree-sitter AST), they
+// are used directly because tree-sitter handles all forms accurately (including
+// "except Exception as e: pass" and "pass" followed by real code). The regex
+// scanner is the fallback for cases where ErrorPatterns is empty.
 func (p *Pass) runGeneric(ctx *passes.Context) error {
+	prog := ctx.Program
+
+	if len(prog.ErrorPatterns) > 0 {
+		return p.runFromTreeSitterPatterns(ctx)
+	}
+	return p.runRegexFallback(ctx)
+}
+
+// runFromTreeSitterPatterns converts tree-sitter extracted ErrorPatternInfo
+// entries into ErrorPath results.
+func (p *Pass) runFromTreeSitterPatterns(ctx *passes.Context) error {
+	for _, ep := range ctx.Program.ErrorPatterns {
+		switch ep.Kind {
+		case "raise":
+			ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
+				Origin: ttypes.Location{
+					File:     ep.File,
+					Line:     ep.Line,
+					Function: ep.FuncName,
+				},
+				Handlers: []ttypes.ErrorHandler{{
+					Location: ttypes.Location{File: ep.File, Line: ep.Line, Function: ep.FuncName},
+					Kind:     "RAISE",
+				}},
+				Dropped:  false,
+				FailMode: "CLOSED",
+			})
+		case "empty_except":
+			ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
+				Origin: ttypes.Location{
+					File:     ep.File,
+					Line:     ep.Line,
+					Function: ep.FuncName,
+				},
+				Handlers: nil,
+				Dropped:  true,
+				FailMode: "OPEN",
+			})
+		}
+	}
+
+	sort.Slice(ctx.Result.ErrorPaths, func(i, j int) bool {
+		oi, oj := ctx.Result.ErrorPaths[i].Origin, ctx.Result.ErrorPaths[j].Origin
+		if oi.File != oj.File {
+			return oi.File < oj.File
+		}
+		return oi.Line < oj.Line
+	})
+
+	return nil
+}
+
+// runRegexFallback scans source files for error handling patterns using regex.
+// Used only when tree-sitter error patterns are not available.
+func (p *Pass) runRegexFallback(ctx *passes.Context) error {
 	prog := ctx.Program
 
 	for filePath, content := range prog.Files {

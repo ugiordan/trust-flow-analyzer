@@ -45,6 +45,7 @@ func LoadTreeSitter(dir string, lang string, stderr io.Writer) (*ir.AnalysisProg
 
 	var allFunctions []ir.FunctionInfo
 	var allCallSites []ir.CallSiteInfo
+	var allErrorPatterns []ir.ErrorPatternInfo
 	files := make(map[string][]byte)
 
 	walkErr := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -78,6 +79,20 @@ func LoadTreeSitter(dir string, lang string, stderr io.Writer) (*ir.AnalysisProg
 		allFunctions = append(allFunctions, result.Functions...)
 		allCallSites = append(allCallSites, result.CallSites...)
 
+		for _, ep := range result.Errors {
+			relPath, relErr := filepath.Rel(dir, ep.File)
+			if relErr != nil {
+				relPath = ep.File
+			}
+			allErrorPatterns = append(allErrorPatterns, ir.ErrorPatternInfo{
+				Kind:     ep.Kind,
+				File:     relPath,
+				Line:     ep.Line,
+				FuncName: ep.FuncName,
+				Message:  ep.Message,
+			})
+		}
+
 		return nil
 	})
 	if walkErr != nil {
@@ -87,15 +102,16 @@ func LoadTreeSitter(dir string, lang string, stderr io.Writer) (*ir.AnalysisProg
 	callees, callers := treesitter.BuildCallGraph(allFunctions, allCallSites)
 
 	return &ir.AnalysisProgram{
-		Language:   lang,
-		ModulePath: projectName,
-		RootDir:    dir,
-		Functions:  allFunctions,
-		CallSites:  allCallSites,
-		Callees:    callees,
-		Callers:    callers,
-		Files:      files,
-		GoSSA:      nil,
+		Language:      lang,
+		ModulePath:    projectName,
+		RootDir:       dir,
+		Functions:     allFunctions,
+		CallSites:     allCallSites,
+		Callees:       callees,
+		Callers:       callers,
+		Files:         files,
+		ErrorPatterns: allErrorPatterns,
+		GoSSA:         nil,
 	}, nil
 }
 
