@@ -197,14 +197,6 @@ func (p *Pass) runRegexFallback(ctx *passes.Context) error {
 				})
 			}
 
-			// Detect empty except blocks (except: followed by pass or nothing)
-			if emptyExceptPattern.MatchString(line) {
-				inEmptyExcept = true
-				exceptLine = lineNum
-				exceptIndent = indentLevel(line)
-				continue
-			}
-
 			if inEmptyExcept {
 				trimmed := strings.TrimSpace(line)
 				// Skip blank lines and comment-only lines inside the except body
@@ -247,6 +239,16 @@ func (p *Pass) runRegexFallback(ctx *passes.Context) error {
 					})
 				}
 				inEmptyExcept = false
+			}
+
+			// Detect empty except blocks (except: followed by pass or nothing).
+			// This check must come AFTER the inEmptyExcept handling so that a
+			// consecutive except: line finalizes the previous empty except first.
+			if emptyExceptPattern.MatchString(line) {
+				inEmptyExcept = true
+				exceptLine = lineNum
+				exceptIndent = indentLevel(line)
+				continue
 			}
 		}
 

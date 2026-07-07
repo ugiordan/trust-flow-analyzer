@@ -114,6 +114,13 @@ func (w *tsWalker) walk(node *sitter.Node) {
 			w.extractCallbackFunction(node)
 			return
 		}
+		// Non-callback arrow functions/function expressions that aren't captured
+		// by a variable declaration (extractVarDecl handles those). Register with
+		// a synthetic name so curFunc is set correctly for call sites inside the body.
+		line := int(node.StartPoint().Row) + 1
+		syntheticName := fmt.Sprintf("anon$L%d", line)
+		w.recordFunction(node, syntheticName, nil)
+		return
 	case "call_expression":
 		w.extractCallSite(node)
 	case "throw_statement":

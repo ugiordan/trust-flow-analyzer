@@ -138,7 +138,10 @@ func analyzeCall(goSSA *ir.GoSSAData, modulePath string, fn *ssa.Function, call 
 		lc := getOrCreate(resources, resourceKey)
 		lc.Delete = &loc
 	} else if matchesAny(calleeName, ownerPatterns) {
-		lc := getOrCreate(resources, resourceKey)
+		// Owner reference calls take (owner, controlled, scheme). The controlled
+		// resource is the second non-Context argument, not the first.
+		ownedKey := inferOwnedResourceKey(fn, call)
+		lc := getOrCreate(resources, ownedKey)
 		lc.Owner = &loc
 	} else if matchesAny(calleeName, finalizerPatterns) {
 		lc := getOrCreate(resources, resourceKey)
@@ -267,6 +270,54 @@ func inferResourceKey(fn *ssa.Function, call *ssa.Call) string {
 		return fn.Package().Pkg.Name() + "." + fn.Name()
 	}
 	return fn.Name()
+}
+
+// inferOwnedResourceKey extracts the controlled (owned) resource type from an
+// owner reference call. SetOwnerReference(owner, controlled, scheme) and
+// SetControllerReference(owner, controlled, scheme) take the owner as the first
+// non-Context argument and the controlled resource as the second. This function
+// skips both context.Context and the owner argument to return the controlled
+// resource's type.
+func inferOwnedResourceKey(fn *ssa.Function, call *ssa.Call) string {
+	args := call.Call.Args
+	skipped := 0
+	for _, arg := range args {
+		typeName := arg.Type().String()
+		typeName = strings.TrimPrefix(typeName, "*")
+
+		if typeName == "context.Context" {
+			continue
+		}
+
+		// Skip the first non-Context arg (the owner).
+		if skipped == 0 {
+			skipped++
+			continue
+		}
+
+		// This is the controlled resource (second non-Context arg).
+		if mi, ok := arg.(*ssa.MakeInterface); ok {
+			concrete := mi.X.Type().String()
+			concrete = strings.TrimPrefix(concrete, "*")
+			if idx := strings.LastIndex(concrete, "."); idx >= 0 {
+				return concrete[idx+1:]
+			}
+			if concrete != "" {
+				return concrete
+			}
+		}
+
+		if idx := strings.LastIndex(typeName, "."); idx >= 0 {
+			return typeName[idx+1:]
+		}
+		if typeName != "" {
+			return typeName
+		}
+	}
+
+	// Fallback: if we couldn't find the controlled resource, use the same
+	// logic as inferResourceKey.
+	return inferResourceKey(fn, call)
 }
 
 func matchesAny(name string, patterns []string) bool {
