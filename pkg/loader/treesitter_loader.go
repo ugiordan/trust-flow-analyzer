@@ -14,14 +14,22 @@ import (
 
 // skipDirs is the set of directory names to skip during tree-sitter file walks.
 var skipDirs = map[string]bool{
-	".git":        true,
-	"__pycache__": true,
+	".git":         true,
+	"__pycache__":  true,
 	"node_modules": true,
-	"venv":        true,
-	".venv":       true,
-	"target":      true,
-	"vendor":      true,
-	".tox":        true,
+	"venv":         true,
+	".venv":        true,
+	"target":       true,
+	"vendor":       true,
+	".tox":         true,
+	"dist":         true,
+	"build":        true,
+	"public":       true,
+	"static":       true,
+	".next":        true,
+	"coverage":     true,
+	".nyc_output":  true,
+	"out":          true,
 }
 
 // LoadTreeSitter loads a non-Go project via tree-sitter parsing and returns an
@@ -60,6 +68,11 @@ func LoadTreeSitter(dir string, lang string, stderr io.Writer) (*ir.AnalysisProg
 		}
 		ext := filepath.Ext(path)
 		if !exts[ext] {
+			return nil
+		}
+		name := info.Name()
+		if strings.HasSuffix(name, ".min.js") || strings.HasSuffix(name, ".min.ts") ||
+			strings.HasSuffix(name, ".bundle.js") || strings.Contains(name, ".chunk.") {
 			return nil
 		}
 
@@ -172,6 +185,10 @@ func newParser(rootDir string, lang string) (treesitter.Parser, error) {
 	switch strings.ToLower(lang) {
 	case "python":
 		return treesitter.NewPythonParser(rootDir), nil
+	case "typescript":
+		return treesitter.NewTypeScriptParser(rootDir), nil
+	case "rust":
+		return treesitter.NewRustParser(rootDir), nil
 	default:
 		return nil, fmt.Errorf("unsupported language for tree-sitter parsing: %s", lang)
 	}

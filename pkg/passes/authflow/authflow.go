@@ -44,7 +44,7 @@ var patterns = []authPattern{
 	{"GetSession", "session"},
 	{"getAuthenticatedSession", "session"},
 
-	// snake_case (Python)
+	// snake_case (Python, Rust)
 	{"authenticate", "authn"},
 	{"validate_token", "authn"},
 	{"verify_token", "authn"},
@@ -61,6 +61,22 @@ var patterns = []authPattern{
 
 	{"create_session", "session"},
 	{"get_session", "session"},
+
+	// camelCase (TypeScript/JavaScript)
+	{"validateToken", "authn"},
+	{"verifyToken", "authn"},
+	{"checkToken", "authn"},
+	{"isAuthenticated", "authn"},
+
+	{"checkAccess", "authz"},
+	{"isAllowed", "authz"},
+	{"checkPermission", "authz"},
+
+	{"validateEmail", "validator"},
+	{"checkGroups", "validator"},
+	{"validateDomain", "validator"},
+
+	{"getSession", "session"},
 }
 
 // Pass implements the auth flow analysis.
@@ -224,20 +240,54 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 }
 
 // isGenericEntryPoint checks whether a function looks like an HTTP entry point
-// in a non-Go language (e.g. Python Flask/FastAPI routes).
+// in a non-Go language (Python Flask/FastAPI, TypeScript Express/NestJS/Next.js,
+// Rust actix-web/axum).
 func isGenericEntryPoint(fn ir.FunctionInfo) bool {
-	routePatterns := []string{
+	// Python: Flask/FastAPI/Blueprint decorator patterns
+	routeDecorators := []string{
 		"@app.route", "@app.get", "@app.post", "@app.put", "@app.delete", "@app.patch",
 		"@router.get", "@router.post", "@router.put", "@router.delete", "@router.patch",
 		"@blueprint.route",
 	}
+
+	// TypeScript: NestJS decorator patterns
+	nestDecorators := []string{
+		"@Get", "@Post", "@Put", "@Delete", "@Patch", "@All",
+	}
+
+	// Rust: actix-web / axum attribute patterns
+	rustAttributes := []string{
+		"#[get", "#[post", "#[put", "#[delete", "#[patch",
+		"#[route",
+	}
+
 	for _, dec := range fn.Decorators {
-		for _, pat := range routePatterns {
+		for _, pat := range routeDecorators {
+			if strings.Contains(dec, pat) {
+				return true
+			}
+		}
+		for _, pat := range nestDecorators {
+			if strings.Contains(dec, pat) {
+				return true
+			}
+		}
+		for _, pat := range rustAttributes {
 			if strings.Contains(dec, pat) {
 				return true
 			}
 		}
 	}
+
+	// TypeScript: Express-style callback names and Next.js conventions
+	handlerNames := map[string]bool{
+		"handler": true, "middleware": true,
+		"GET": true, "POST": true, "PUT": true, "DELETE": true, "PATCH": true,
+	}
+	if handlerNames[fn.Name] {
+		return true
+	}
+
 	return false
 }
 
