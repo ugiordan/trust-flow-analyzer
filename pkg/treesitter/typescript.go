@@ -239,10 +239,8 @@ func (w *tsWalker) recordFunction(node *sitter.Node, name string, decorators []s
 	id := w.functionID(name)
 
 	isMethod := w.curClass != ""
-	// Heuristic: capitalized name or is a method
 	isExported := isMethod || (len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z')
-	// Also check if the node (or its declaration parent) is wrapped in an export_statement
-	if node.Parent() != nil && node.Parent().Type() == "export_statement" {
+	if hasExportAncestor(node) {
 		isExported = true
 	}
 
@@ -561,6 +559,22 @@ func (w *tsWalker) extractCallbackFunction(node *sitter.Node) {
 	syntheticName := fmt.Sprintf("%s$callback_L%d", callTarget, line)
 
 	w.recordFunction(node, syntheticName, nil)
+}
+
+// hasExportAncestor walks up the AST parent chain (up to 4 levels) looking for
+// an export_statement node. This handles all export forms:
+//   - export function foo() {}             (1 hop)
+//   - export const foo = () => {}          (3 hops: arrow -> var_declarator -> lexical_decl -> export)
+//   - export class Foo {}                  (1 hop)
+func hasExportAncestor(node *sitter.Node) bool {
+	p := node.Parent()
+	for i := 0; i < 4 && p != nil; i++ {
+		if p.Type() == "export_statement" {
+			return true
+		}
+		p = p.Parent()
+	}
+	return false
 }
 
 // functionID builds a unique function ID from the current context.
