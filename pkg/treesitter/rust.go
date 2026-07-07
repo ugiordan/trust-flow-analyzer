@@ -100,8 +100,6 @@ func (w *rustWalker) walk(node *sitter.Node) {
 		return
 	case "call_expression":
 		w.extractCallSite(node)
-	case "method_call_expression":
-		w.extractMethodCall(node)
 	case "macro_invocation":
 		w.extractMacro(node)
 	case "try_expression":
@@ -276,6 +274,8 @@ func (w *rustWalker) extractParams(params *sitter.Node) []ir.ParamInfo {
 }
 
 // extractCallSite handles call_expression nodes.
+// In Rust's tree-sitter grammar, method calls like x.unwrap() are represented as
+// call_expression with a field_expression child (not method_call_expression).
 func (w *rustWalker) extractCallSite(node *sitter.Node) {
 	fnNode := node.ChildByFieldName("function")
 	if fnNode == nil {
@@ -301,75 +301,44 @@ func (w *rustWalker) extractCallSite(node *sitter.Node) {
 			if obj != nil {
 				cs.ReceiverExpr = obj.Content(w.src)
 			}
+			// Detect error-prone method calls: .unwrap(), .expect(), .panic()
+			fieldNode := fnNode.ChildByFieldName("field")
+			if fieldNode != nil {
+				methodName := fieldNode.Content(w.src)
+				switch methodName {
+				case "unwrap":
+					w.result.Errors = append(w.result.Errors, ErrorPattern{
+						Kind:     "unwrap",
+						File:     w.file,
+						Line:     line,
+						FuncName: functionNameFromID(w.curFunc),
+						Message:  "unwrap() will panic on None/Err",
+					})
+				case "expect":
+					msg := ""
+					args := node.ChildByFieldName("arguments")
+					if args != nil {
+						for i := 0; i < int(args.ChildCount()); i++ {
+							child := args.Child(i)
+							if child != nil && child.Type() == "string_literal" {
+								msg = child.Content(w.src)
+								break
+							}
+						}
+					}
+					w.result.Errors = append(w.result.Errors, ErrorPattern{
+						Kind:     "unwrap",
+						File:     w.file,
+						Line:     line,
+						FuncName: functionNameFromID(w.curFunc),
+						Message:  "expect() will panic: " + msg,
+					})
+				}
+			}
 		}
 	}
 
 	// Extract arguments
-	args := node.ChildByFieldName("arguments")
-	if args != nil {
-		cs.Arguments = w.extractArguments(args)
-	}
-
-	w.result.CallSites = append(w.result.CallSites, cs)
-}
-
-// extractMethodCall handles method_call_expression nodes (.unwrap(), .expect(), etc.).
-func (w *rustWalker) extractMethodCall(node *sitter.Node) {
-	nameNode := node.ChildByFieldName("name")
-	if nameNode == nil {
-		return
-	}
-
-	methodName := nameNode.Content(w.src)
-	line := int(node.StartPoint().Row) + 1
-
-	// Check for error-prone patterns
-	switch methodName {
-	case "unwrap":
-		w.result.Errors = append(w.result.Errors, ErrorPattern{
-			Kind:     "unwrap",
-			File:     w.file,
-			Line:     line,
-			FuncName: functionNameFromID(w.curFunc),
-			Message:  "unwrap() will panic on None/Err",
-		})
-	case "expect":
-		msg := ""
-		args := node.ChildByFieldName("arguments")
-		if args != nil {
-			for i := 0; i < int(args.ChildCount()); i++ {
-				child := args.Child(i)
-				if child != nil && child.Type() == "string_literal" {
-					msg = child.Content(w.src)
-					break
-				}
-			}
-		}
-		w.result.Errors = append(w.result.Errors, ErrorPattern{
-			Kind:     "unwrap",
-			File:     w.file,
-			Line:     line,
-			FuncName: functionNameFromID(w.curFunc),
-			Message:  "expect() will panic: " + msg,
-		})
-	}
-
-	// Record as a call site
-	obj := node.ChildByFieldName("value")
-	receiverExpr := ""
-	if obj != nil {
-		receiverExpr = obj.Content(w.src)
-	}
-
-	cs := ir.CallSiteInfo{
-		CalleeName:   methodName,
-		File:         w.file,
-		Line:         line,
-		CallerFuncID: w.curFunc,
-		IsMethodCall: true,
-		ReceiverExpr: receiverExpr,
-	}
-
 	args := node.ChildByFieldName("arguments")
 	if args != nil {
 		cs.Arguments = w.extractArguments(args)
@@ -462,6 +431,9 @@ func (w *rustWalker) collectAttributes(node *sitter.Node) []string {
 		return nil
 	}
 
+	// Only collect contiguous attributes immediately before the target node.
+	// Reset on any non-attribute sibling so attributes from a prior function
+	// don't leak into this one.
 	for i := 0; i < int(parent.ChildCount()); i++ {
 		child := parent.Child(i)
 		if child == nil {
@@ -472,6 +444,8 @@ func (w *rustWalker) collectAttributes(node *sitter.Node) []string {
 		}
 		if child.Type() == "attribute_item" {
 			attrs = append(attrs, child.Content(w.src))
+		} else {
+			attrs = attrs[:0] // reset: only contiguous attributes count
 		}
 	}
 	return attrs

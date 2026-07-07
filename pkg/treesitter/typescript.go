@@ -106,6 +106,14 @@ func (w *tsWalker) walk(node *sitter.Node) {
 		// Check for arrow function assignments: const handler = () => {}
 		w.extractVarDecl(node)
 		return
+	case "arrow_function", "function":
+		// Handle anonymous callbacks passed as arguments to call expressions.
+		// e.g., app.get("/path", async (req, res) => { ... })
+		// Generate a synthetic function name from the enclosing call target + line number.
+		if w.isCallbackArg(node) {
+			w.extractCallbackFunction(node)
+			return
+		}
 	case "call_expression":
 		w.extractCallSite(node)
 	case "throw_statement":
@@ -231,9 +239,12 @@ func (w *tsWalker) recordFunction(node *sitter.Node, name string, decorators []s
 	id := w.functionID(name)
 
 	isMethod := w.curClass != ""
-	// TypeScript exports are handled at the statement level,
-	// but we use a heuristic: capitalized name or is a method
-	isExported := len(name) > 0 && (name[0] >= 'A' && name[0] <= 'Z' || isMethod)
+	// Heuristic: capitalized name or is a method
+	isExported := isMethod || (len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z')
+	// Also check if the node (or its declaration parent) is wrapped in an export_statement
+	if node.Parent() != nil && node.Parent().Type() == "export_statement" {
+		isExported = true
+	}
 
 	fn := ir.FunctionInfo{
 		ID:         id,
@@ -494,8 +505,10 @@ func (w *tsWalker) collectDecorators(node *sitter.Node) []string {
 		return nil
 	}
 
-	// For method_definition inside a class body, decorators are preceding siblings
-	// For top-level function/class, decorators are in export_statement or preceding siblings
+	// For method_definition inside a class body, decorators are preceding siblings.
+	// For top-level function/class, decorators are in export_statement or preceding siblings.
+	// Reset on any non-decorator sibling so decorators from a prior method
+	// don't leak into this one.
 	for i := 0; i < int(parent.ChildCount()); i++ {
 		child := parent.Child(i)
 		if child == nil {
@@ -507,9 +520,47 @@ func (w *tsWalker) collectDecorators(node *sitter.Node) []string {
 		}
 		if child.Type() == "decorator" {
 			decorators = append(decorators, child.Content(w.src))
+		} else {
+			decorators = decorators[:0] // reset: only contiguous decorators count
 		}
 	}
 	return decorators
+}
+
+// isCallbackArg returns true when node is an arrow_function or function expression
+// inside the arguments of a call_expression (i.e., a callback).
+func (w *tsWalker) isCallbackArg(node *sitter.Node) bool {
+	parent := node.Parent()
+	if parent == nil {
+		return false
+	}
+	// The parent should be "arguments" and grandparent "call_expression"
+	if parent.Type() == "arguments" {
+		gp := parent.Parent()
+		return gp != nil && gp.Type() == "call_expression"
+	}
+	return false
+}
+
+// extractCallbackFunction creates a synthetic function entry for an arrow function
+// or function expression used as a callback argument, then walks its body with
+// curFunc set so that call sites inside the callback are properly attributed.
+func (w *tsWalker) extractCallbackFunction(node *sitter.Node) {
+	parent := node.Parent()     // arguments
+	callExpr := parent.Parent() // call_expression
+
+	// Build a synthetic name from the call target + line number
+	callTarget := ""
+	fnNode := callExpr.ChildByFieldName("function")
+	if fnNode != nil {
+		callTarget = fnNode.Content(w.src)
+		// Simplify dotted targets: "app.get" -> "app.get"
+		callTarget = strings.ReplaceAll(callTarget, ".", "_")
+	}
+	line := int(node.StartPoint().Row) + 1
+	syntheticName := fmt.Sprintf("%s$callback_L%d", callTarget, line)
+
+	w.recordFunction(node, syntheticName, nil)
 }
 
 // functionID builds a unique function ID from the current context.

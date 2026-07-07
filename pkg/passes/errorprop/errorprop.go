@@ -91,7 +91,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 func (p *Pass) runFromTreeSitterPatterns(ctx *passes.Context) error {
 	for _, ep := range ctx.Program.ErrorPatterns {
 		switch ep.Kind {
-		case "raise":
+		case "raise", "throw":
 			ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
 				Origin: ttypes.Location{
 					File:     ep.File,
@@ -106,7 +106,7 @@ func (p *Pass) runFromTreeSitterPatterns(ctx *passes.Context) error {
 				Dropped:  false,
 				FailMode: "CLOSED",
 			})
-		case "empty_except":
+		case "empty_except", "empty_catch":
 			ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
 				Origin: ttypes.Location{
 					File:     ep.File,
@@ -117,6 +117,38 @@ func (p *Pass) runFromTreeSitterPatterns(ctx *passes.Context) error {
 				Handlers: nil,
 				Dropped:  true,
 				FailMode: "OPEN",
+			})
+		case "unwrap":
+			// Rust .unwrap()/.expect() will panic on None/Err: fail-open behavior
+			ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
+				Origin: ttypes.Location{
+					File:     ep.File,
+					Line:     ep.Line,
+					Function: ep.FuncName,
+					Package:  ep.Package,
+				},
+				Handlers: []ttypes.ErrorHandler{{
+					Location: ttypes.Location{File: ep.File, Line: ep.Line, Function: ep.FuncName, Package: ep.Package},
+					Kind:     "PANIC",
+				}},
+				Dropped:  false,
+				FailMode: "CLOSED",
+			})
+		case "panic":
+			// Explicit panic/todo!/unimplemented! macro invocation
+			ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
+				Origin: ttypes.Location{
+					File:     ep.File,
+					Line:     ep.Line,
+					Function: ep.FuncName,
+					Package:  ep.Package,
+				},
+				Handlers: []ttypes.ErrorHandler{{
+					Location: ttypes.Location{File: ep.File, Line: ep.Line, Function: ep.FuncName, Package: ep.Package},
+					Kind:     "PANIC",
+				}},
+				Dropped:  false,
+				FailMode: "CLOSED",
 			})
 		}
 	}
