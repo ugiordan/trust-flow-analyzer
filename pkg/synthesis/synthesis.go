@@ -18,6 +18,9 @@ func Synthesize(result *types.AnalysisResult) {
 	contradictions = append(contradictions, detectDroppedErrorsOnAuthPath(result)...)
 	contradictions = append(contradictions, detectOrphanedResources(result)...)
 	contradictions = append(contradictions, detectUncoveredRoutes(result)...)
+	contradictions = append(contradictions, detectMissingNetworkPolicies(result)...)
+	contradictions = append(contradictions, detectRBACFindings(result)...)
+	contradictions = append(contradictions, detectWeakMTLS(result)...)
 
 	// Sort by severity (HIGH > MEDIUM > LOW) then title for stable ordering,
 	// then assign IDs so they are deterministic regardless of detection order.
@@ -219,6 +222,185 @@ func detectOrphanedResources(result *types.AnalysisResult) []types.Contradiction
 			Reality:     "Resource " + lc.Resource + " has no owner reference or finalizer. If the parent is deleted, this resource will be orphaned.",
 			Severity:    "LOW",
 		})
+	}
+
+	return contradictions
+}
+
+// detectMissingNetworkPolicies flags services referenced by HTTPRoutes/backendRefs
+// that have no matching NetworkPolicy podSelector. Only fires if the project has
+// at least one NetworkPolicy (projects without any are not flagged).
+func detectMissingNetworkPolicies(result *types.AnalysisResult) []types.Contradiction {
+	if len(result.NetworkPolicies) == 0 {
+		return nil
+	}
+
+	// Build a set of pod selector labels from all NetworkPolicies.
+	coveredSelectors := make(map[string]bool)
+	for _, np := range result.NetworkPolicies {
+		if np.PodSelector != "" && np.PodSelector != "(all pods)" {
+			coveredSelectors[np.PodSelector] = true
+		}
+	}
+
+	// Collect backend service names from route coverage.
+	type backendRef struct {
+		name string
+		file string
+	}
+	seen := make(map[string]bool)
+	var backends []backendRef
+	for _, cov := range result.RouteCoverage {
+		if cov.Backend != "" && !seen[cov.Backend] {
+			seen[cov.Backend] = true
+			backends = append(backends, backendRef{name: cov.Backend, file: cov.RouteFile})
+		}
+	}
+
+	var contradictions []types.Contradiction
+	for _, backend := range backends {
+		// Check if any NetworkPolicy podSelector mentions this backend name.
+		covered := false
+		for selector := range coveredSelectors {
+			// Simple heuristic: check if the backend name appears in a selector value.
+			if containsServiceName(selector, backend.name) {
+				covered = true
+				break
+			}
+		}
+
+		if !covered {
+			contradictions = append(contradictions, types.Contradiction{
+				Title: backend.name + " has no NetworkPolicy coverage",
+				Assumptions: []types.Assumption{
+					{
+						Location:    types.Location{File: backend.file},
+						Description: "HTTPRoute routes traffic to backend " + backend.name + " but no NetworkPolicy selects it",
+					},
+				},
+				Reality:    "Service " + backend.name + " is exposed via HTTPRoute but has no NetworkPolicy restricting ingress/egress. Any pod in the namespace can reach it.",
+				Severity:   "MEDIUM",
+				Mitigation: "Add a NetworkPolicy with a podSelector matching the " + backend.name + " pods.",
+			})
+		}
+	}
+
+	return contradictions
+}
+
+// containsServiceName checks if a label selector references a service name.
+// Matches patterns like "app=my-service" or "component=my-service".
+func containsServiceName(selector, serviceName string) bool {
+	// Split selector into individual label pairs and check values.
+	pairs := splitLabels(selector)
+	for _, pair := range pairs {
+		parts := splitOnce(pair, "=")
+		if len(parts) == 2 && parts[1] == serviceName {
+			return true
+		}
+	}
+	return false
+}
+
+func splitLabels(s string) []string {
+	var result []string
+	for _, part := range splitOnce(s, ",") {
+		trimmed := trimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	// If no comma found, return the original as a single-element slice.
+	if len(result) == 0 && s != "" {
+		return []string{trimSpace(s)}
+	}
+	return result
+}
+
+func splitOnce(s, sep string) []string {
+	idx := indexOf(s, sep)
+	if idx < 0 {
+		return []string{s}
+	}
+	return []string{s[:idx], s[idx+len(sep):]}
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
+func trimSpace(s string) string {
+	start := 0
+	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	end := len(s)
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
+	return s[start:end]
+}
+
+// detectRBACFindings converts each RBAC finding into a contradiction.
+func detectRBACFindings(result *types.AnalysisResult) []types.Contradiction {
+	var contradictions []types.Contradiction
+
+	for _, f := range result.RBACFindings {
+		contradictions = append(contradictions, types.Contradiction{
+			Title: f.Name + " " + f.Kind + " is overprivileged",
+			Assumptions: []types.Assumption{
+				{
+					Location:    types.Location{File: f.File},
+					Description: f.Kind + " " + f.Name + " grants " + f.Rule,
+				},
+			},
+			Reality:    f.Reason,
+			Severity:   f.Severity,
+			Mitigation: "Reduce scope to namespace-scoped Role or restrict resource/verb combinations.",
+		})
+	}
+
+	return contradictions
+}
+
+// detectWeakMTLS flags PERMISSIVE or DISABLE mTLS modes as contradictions.
+func detectWeakMTLS(result *types.AnalysisResult) []types.Contradiction {
+	var contradictions []types.Contradiction
+
+	for _, mp := range result.MeshPolicies {
+		switch mp.MTLSMode {
+		case "PERMISSIVE":
+			contradictions = append(contradictions, types.Contradiction{
+				Title: mp.Name + " uses PERMISSIVE mTLS",
+				Assumptions: []types.Assumption{
+					{
+						Location:    types.Location{File: mp.File},
+						Description: mp.Kind + " " + mp.Name + " sets mTLS to PERMISSIVE (" + mp.Scope + ")",
+					},
+				},
+				Reality:    "PERMISSIVE mTLS allows both plaintext and encrypted traffic. Attackers can downgrade connections to plaintext.",
+				Severity:   "LOW",
+				Mitigation: "Set mTLS mode to STRICT to enforce encrypted service-to-service communication.",
+			})
+		case "DISABLE":
+			contradictions = append(contradictions, types.Contradiction{
+				Title: mp.Name + " disables mTLS",
+				Assumptions: []types.Assumption{
+					{
+						Location:    types.Location{File: mp.File},
+						Description: mp.Kind + " " + mp.Name + " sets mTLS to DISABLE (" + mp.Scope + ")",
+					},
+				},
+				Reality:    "mTLS is disabled. All service-to-service traffic is plaintext and vulnerable to eavesdropping and tampering.",
+				Severity:   "MEDIUM",
+				Mitigation: "Enable mTLS (STRICT mode) to encrypt service-to-service communication.",
+			})
+		}
 	}
 
 	return contradictions

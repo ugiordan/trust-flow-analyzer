@@ -151,16 +151,50 @@ type RouteCoverage struct {
 	Backend   string
 }
 
+// NetworkPolicyInfo describes a Kubernetes NetworkPolicy resource.
+type NetworkPolicyInfo struct {
+	Name        string
+	File        string
+	Namespace   string
+	PodSelector string   // label selector as string
+	PolicyTypes []string // Ingress, Egress
+	IngressFrom []string // summarized ingress sources
+	EgressTo    []string // summarized egress destinations
+}
+
+// RBACFinding describes an overprivileged RBAC pattern in a ClusterRole or ClusterRoleBinding.
+type RBACFinding struct {
+	Name     string
+	Kind     string // ClusterRole, ClusterRoleBinding
+	File     string
+	Severity string // HIGH, MEDIUM, LOW
+	Rule     string // which rule is overprivileged
+	Reason   string // why it's flagged
+}
+
+// MeshPolicyInfo describes a service mesh policy resource (Istio PeerAuthentication, DestinationRule, etc).
+type MeshPolicyInfo struct {
+	Name      string
+	Kind      string // PeerAuthentication, DestinationRule, ServiceMeshMemberRoll, ServiceMeshControlPlane
+	File      string
+	Namespace string
+	MTLSMode  string // STRICT, PERMISSIVE, DISABLE, UNSET
+	Scope     string // namespace-wide, workload-specific, mesh-wide
+}
+
 // AnalysisResult holds the combined output of all analysis passes.
 type AnalysisResult struct {
-	Project         string
-	AuthFlows       []AuthFlow
-	Defaults        []DefaultValue
-	Contracts       []Contract
-	ErrorPaths      []ErrorPath
-	Lifecycles      []ResourceLifecycle
-	SecretExposures []SecretExposure
-	AuthPolicies    []AuthPolicyInfo
-	RouteCoverage   []RouteCoverage
-	Contradictions  []Contradiction
+	Project          string
+	AuthFlows        []AuthFlow
+	Defaults         []DefaultValue
+	Contracts        []Contract
+	ErrorPaths       []ErrorPath
+	Lifecycles       []ResourceLifecycle
+	SecretExposures  []SecretExposure
+	AuthPolicies     []AuthPolicyInfo
+	RouteCoverage    []RouteCoverage
+	NetworkPolicies  []NetworkPolicyInfo
+	RBACFindings     []RBACFinding
+	MeshPolicies     []MeshPolicyInfo
+	Contradictions   []Contradiction
 }

@@ -17,6 +17,9 @@ import (
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/defaults"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/errorprop"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/lifecycle"
+	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/meshpolicy"
+	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/netpolicy"
+	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/rbacscope"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/secrets"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/platform"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/synthesis"
@@ -121,16 +124,19 @@ func runAnalyze(args []string) error {
 
 	plat := platform.NewKnowledge()
 	result := &types.AnalysisResult{
-		Project:         filepath.Base(absDir),
-		AuthFlows:       []types.AuthFlow{},
-		Defaults:        []types.DefaultValue{},
-		Contracts:       []types.Contract{},
-		ErrorPaths:      []types.ErrorPath{},
-		Lifecycles:      []types.ResourceLifecycle{},
-		SecretExposures: []types.SecretExposure{},
-		AuthPolicies:    []types.AuthPolicyInfo{},
-		RouteCoverage:   []types.RouteCoverage{},
-		Contradictions:  []types.Contradiction{},
+		Project:          filepath.Base(absDir),
+		AuthFlows:        []types.AuthFlow{},
+		Defaults:         []types.DefaultValue{},
+		Contracts:        []types.Contract{},
+		ErrorPaths:       []types.ErrorPath{},
+		Lifecycles:       []types.ResourceLifecycle{},
+		SecretExposures:  []types.SecretExposure{},
+		AuthPolicies:     []types.AuthPolicyInfo{},
+		RouteCoverage:    []types.RouteCoverage{},
+		NetworkPolicies:  []types.NetworkPolicyInfo{},
+		RBACFindings:     []types.RBACFinding{},
+		MeshPolicies:     []types.MeshPolicyInfo{},
+		Contradictions:   []types.Contradiction{},
 	}
 
 	ctx := &passes.Context{
@@ -148,6 +154,9 @@ func runAnalyze(args []string) error {
 		&lifecycle.Pass{},
 		&secrets.Pass{},
 		&authpolicy.Pass{},
+		&netpolicy.Pass{},
+		&rbacscope.Pass{},
+		&meshpolicy.Pass{},
 	}
 
 	for _, p := range allPasses {
@@ -236,5 +245,8 @@ func printSummary(w io.Writer, result *types.AnalysisResult) {
 	fmt.Fprintf(w, "  secret exposures:  %d\n", len(result.SecretExposures))
 	fmt.Fprintf(w, "  auth policies:     %d\n", len(result.AuthPolicies))
 	fmt.Fprintf(w, "  route coverage:    %d\n", len(result.RouteCoverage))
+	fmt.Fprintf(w, "  network policies:  %d\n", len(result.NetworkPolicies))
+	fmt.Fprintf(w, "  RBAC findings:     %d\n", len(result.RBACFindings))
+	fmt.Fprintf(w, "  mesh policies:     %d\n", len(result.MeshPolicies))
 	fmt.Fprintf(w, "  contradictions:    %d\n", len(result.Contradictions))
 }

@@ -47,6 +47,18 @@ func WriteMarkdown(w io.Writer, result *types.AnalysisResult) error {
 		writeRouteCoverage(p, result.RouteCoverage)
 	}
 
+	if len(result.NetworkPolicies) > 0 {
+		writeNetworkPolicies(p, result.NetworkPolicies)
+	}
+
+	if len(result.RBACFindings) > 0 {
+		writeRBACFindings(p, result.RBACFindings)
+	}
+
+	if len(result.MeshPolicies) > 0 {
+		writeMeshPolicies(p, result.MeshPolicies)
+	}
+
 	if len(result.Contradictions) > 0 {
 		writeContradictions(p, result.Contradictions)
 	}
@@ -317,6 +329,66 @@ func writeRouteCoverage(p *printer, coverage []types.RouteCoverage) {
 		)
 	}
 	p.blank()
+}
+
+func writeNetworkPolicies(p *printer, policies []types.NetworkPolicyInfo) {
+	p.line("## Network Policies")
+	p.blank()
+
+	for _, pol := range policies {
+		p.line("### %s", pol.Name)
+		p.line("File: %s", pol.File)
+		if pol.Namespace != "" {
+			p.line("Namespace: %s", pol.Namespace)
+		}
+		p.line("Pod selector: %s", pol.PodSelector)
+		if len(pol.PolicyTypes) > 0 {
+			p.line("Policy types: %s", strings.Join(pol.PolicyTypes, ", "))
+		}
+		if len(pol.IngressFrom) > 0 {
+			p.line("Ingress from:")
+			for _, src := range pol.IngressFrom {
+				p.line("  - %s", src)
+			}
+		}
+		if len(pol.EgressTo) > 0 {
+			p.line("Egress to:")
+			for _, dst := range pol.EgressTo {
+				p.line("  - %s", dst)
+			}
+		}
+		p.blank()
+	}
+}
+
+func writeRBACFindings(p *printer, findings []types.RBACFinding) {
+	p.line("## RBAC Findings")
+	p.blank()
+
+	for _, f := range findings {
+		p.line("### %s (%s)", f.Name, f.Kind)
+		p.line("File: %s", f.File)
+		p.line("Severity: %s", f.Severity)
+		p.line("Rule: %s", f.Rule)
+		p.line("Reason: %s", f.Reason)
+		p.blank()
+	}
+}
+
+func writeMeshPolicies(p *printer, policies []types.MeshPolicyInfo) {
+	p.line("## Service Mesh Policies")
+	p.blank()
+
+	for _, pol := range policies {
+		p.line("### %s (%s)", pol.Name, pol.Kind)
+		p.line("File: %s", pol.File)
+		if pol.Namespace != "" {
+			p.line("Namespace: %s", pol.Namespace)
+		}
+		p.line("mTLS mode: %s", pol.MTLSMode)
+		p.line("Scope: %s", pol.Scope)
+		p.blank()
+	}
 }
 
 func formatConfigValue(cfg types.ConfigField) string {
