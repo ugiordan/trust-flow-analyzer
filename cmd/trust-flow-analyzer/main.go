@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/output"
@@ -95,6 +96,20 @@ func runAnalyze(args []string) error {
 			fmt.Fprintf(os.Stderr, "warning: failed to load arch-context from %q: %v\n", *archContextFlag, err)
 		} else {
 			fmt.Fprintf(os.Stderr, "loaded arch-context: %d components\n", len(archCtx.Components))
+
+			var sources []string
+			if archCtx.RBACData != nil {
+				sources = append(sources, "RBAC")
+			}
+			if len(archCtx.NetworkPolicies) > 0 {
+				sources = append(sources, "NetworkPolicy")
+			}
+			if len(archCtx.SecurityAnnotations) > 0 {
+				sources = append(sources, "security findings")
+			}
+			if len(sources) > 0 {
+				fmt.Fprintf(os.Stderr, "using arch-context for %s\n", strings.Join(sources, ", "))
+			}
 		}
 	}
 
@@ -218,14 +233,18 @@ func runAnalyze(args []string) error {
 }
 
 // loadArchContext reads and parses an architecture-analyzer JSON output file.
-// It accepts either a direct array of components or an object with a "components" field.
+// It accepts either a full component-architecture.json (with rbac, network_policies,
+// security_annotations, deployments), a minimal object with a "components" field,
+// or a bare array of components.
 func loadArchContext(path string) (*passes.ArchContext, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
 	}
 
-	// Try parsing as an object with a "components" field first.
+	// Try parsing as a full arch-context object first. json.Unmarshal ignores
+	// unknown fields, so this handles both full component-architecture.json and
+	// minimal {"components": [...]} formats.
 	var archCtx passes.ArchContext
 	if err := json.Unmarshal(data, &archCtx); err == nil {
 		return &archCtx, nil

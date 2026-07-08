@@ -45,6 +45,21 @@ type Pass struct{}
 func (p *Pass) Name() string { return "meshpolicy" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
+	if ctx.ArchContext != nil {
+		return p.runFromArchContext(ctx)
+	}
+	return p.runSelfExtract(ctx)
+}
+
+func (p *Pass) runFromArchContext(ctx *passes.Context) error {
+	// The architecture-analyzer does not currently produce mesh-specific
+	// structured data, so we still self-extract mesh policies from YAML.
+	// This method is the extension point: when arch-analyzer gains Istio/OSSM
+	// extraction, mesh data will be consumed here instead of walking files.
+	return p.runSelfExtract(ctx)
+}
+
+func (p *Pass) runSelfExtract(ctx *passes.Context) error {
 	rootDir := ctx.Program.RootDir
 
 	var policies []types.MeshPolicyInfo

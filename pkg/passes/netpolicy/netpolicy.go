@@ -38,6 +38,37 @@ type Pass struct{}
 func (p *Pass) Name() string { return "netpolicy" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
+	if ctx.ArchContext != nil && len(ctx.ArchContext.NetworkPolicies) > 0 {
+		return p.runFromArchContext(ctx)
+	}
+	return p.runSelfExtract(ctx)
+}
+
+func (p *Pass) runFromArchContext(ctx *passes.Context) error {
+	var policies []types.NetworkPolicyInfo
+
+	for _, np := range ctx.ArchContext.NetworkPolicies {
+		policies = append(policies, types.NetworkPolicyInfo{
+			Name:        np.Name,
+			File:        "arch-context",
+			Namespace:   np.Namespace,
+			PodSelector: np.PodSelector,
+			PolicyTypes: np.PolicyTypes,
+		})
+	}
+
+	sort.Slice(policies, func(i, j int) bool {
+		if policies[i].File != policies[j].File {
+			return policies[i].File < policies[j].File
+		}
+		return policies[i].Name < policies[j].Name
+	})
+
+	ctx.Result.NetworkPolicies = append(ctx.Result.NetworkPolicies, policies...)
+	return nil
+}
+
+func (p *Pass) runSelfExtract(ctx *passes.Context) error {
 	rootDir := ctx.Program.RootDir
 
 	var policies []types.NetworkPolicyInfo

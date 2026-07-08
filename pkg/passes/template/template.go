@@ -68,6 +68,50 @@ type Pass struct{}
 func (p *Pass) Name() string { return "template" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
+	if ctx.ArchContext != nil && len(ctx.ArchContext.SecurityAnnotations) > 0 {
+		return p.runFromArchContext(ctx)
+	}
+	return p.runSelfExtract(ctx)
+}
+
+func (p *Pass) runFromArchContext(ctx *passes.Context) error {
+	var risks []types.TemplateRisk
+
+	for _, ann := range ctx.ArchContext.SecurityAnnotations {
+		switch ann.Type {
+		case "SECRET_IN_CONTAINER_ARGS":
+			risks = append(risks, types.TemplateRisk{
+				File:        "arch-context",
+				Line:        0,
+				Kind:        "SECRET_IN_ARGS",
+				Field:       ann.Source,
+				Severity:    ann.Severity,
+				Description: ann.Description,
+			})
+		case "CRD_CONFUSED_DEPUTY":
+			risks = append(risks, types.TemplateRisk{
+				File:        "arch-context",
+				Line:        0,
+				Kind:        "CONDITIONAL_SECURITY",
+				Field:       ann.Source,
+				Severity:    ann.Severity,
+				Description: ann.Description,
+			})
+		}
+	}
+
+	sort.Slice(risks, func(i, j int) bool {
+		if risks[i].File != risks[j].File {
+			return risks[i].File < risks[j].File
+		}
+		return risks[i].Line < risks[j].Line
+	})
+
+	ctx.Result.TemplateRisks = append(ctx.Result.TemplateRisks, risks...)
+	return nil
+}
+
+func (p *Pass) runSelfExtract(ctx *passes.Context) error {
 	rootDir := ctx.Program.RootDir
 
 	var risks []types.TemplateRisk

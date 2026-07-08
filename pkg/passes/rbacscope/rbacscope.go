@@ -38,6 +38,113 @@ type Pass struct{}
 func (p *Pass) Name() string { return "rbacscope" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
+	if ctx.ArchContext != nil && ctx.ArchContext.RBACData != nil {
+		return p.runFromArchContext(ctx)
+	}
+	return p.runSelfExtract(ctx)
+}
+
+func (p *Pass) runFromArchContext(ctx *passes.Context) error {
+	var findings []types.RBACFinding
+
+	rbac := ctx.ArchContext.RBACData
+
+	for _, role := range rbac.ClusterRoles {
+		for _, rule := range role.Rules {
+			verbStr := strings.Join(rule.Verbs, ", ")
+			resourceStr := strings.Join(rule.Resources, ", ")
+
+			if containsWildcard(rule.Verbs) {
+				findings = append(findings, types.RBACFinding{
+					Name:     role.Name,
+					Kind:     "ClusterRole",
+					File:     "arch-context",
+					Severity: "HIGH",
+					Rule:     fmt.Sprintf("%s [%s]", resourceStr, verbStr),
+					Reason:   "ClusterRole grants wildcard verbs (*) at cluster scope. Effectively grants all operations.",
+				})
+				continue
+			}
+
+			if containsWildcard(rule.Resources) {
+				findings = append(findings, types.RBACFinding{
+					Name:     role.Name,
+					Kind:     "ClusterRole",
+					File:     "arch-context",
+					Severity: "HIGH",
+					Rule:     fmt.Sprintf("%s [%s]", resourceStr, verbStr),
+					Reason:   "ClusterRole grants access to wildcard resources (*) at cluster scope.",
+				})
+				continue
+			}
+
+			if containsResource(rule.Resources, "secrets") && hasWriteVerbs(rule.Verbs) {
+				findings = append(findings, types.RBACFinding{
+					Name:     role.Name,
+					Kind:     "ClusterRole",
+					File:     "arch-context",
+					Severity: "HIGH",
+					Rule:     fmt.Sprintf("secrets [%s]", verbStr),
+					Reason:   "ClusterRole grants secrets CRUD at cluster scope. Namespace-scoped Role preferred.",
+				})
+			}
+
+			if containsResource(rule.Resources, "configmaps") && hasWriteVerbs(rule.Verbs) {
+				findings = append(findings, types.RBACFinding{
+					Name:     role.Name,
+					Kind:     "ClusterRole",
+					File:     "arch-context",
+					Severity: "MEDIUM",
+					Rule:     fmt.Sprintf("configmaps [%s]", verbStr),
+					Reason:   "ClusterRole grants configmaps write access at cluster scope. Consider namespace-scoped Role.",
+				})
+			}
+		}
+	}
+
+	for _, binding := range rbac.Bindings {
+		if binding.RoleRef == "aggregate-to-edit" {
+			findings = append(findings, types.RBACFinding{
+				Name:     binding.Name,
+				Kind:     "ClusterRoleBinding",
+				File:     "arch-context",
+				Severity: "MEDIUM",
+				Rule:     fmt.Sprintf("roleRef: %s", binding.RoleRef),
+				Reason:   "ClusterRoleBinding binds to aggregate-to-edit, which silently expands role permissions via label aggregation.",
+			})
+		}
+	}
+
+	// Consume RBAC-related security annotations from arch-context.
+	for _, ann := range ctx.ArchContext.SecurityAnnotations {
+		if ann.Type == "RBAC_CLUSTER_SCOPE_SENSITIVE" {
+			findings = append(findings, types.RBACFinding{
+				Name:     ann.Source,
+				Kind:     "ClusterRole",
+				File:     "arch-context",
+				Severity: ann.Severity,
+				Rule:     ann.Type,
+				Reason:   ann.Description,
+			})
+		}
+	}
+
+	sort.Slice(findings, func(i, j int) bool {
+		si, sj := severityRank(findings[i].Severity), severityRank(findings[j].Severity)
+		if si != sj {
+			return si < sj
+		}
+		if findings[i].File != findings[j].File {
+			return findings[i].File < findings[j].File
+		}
+		return findings[i].Name < findings[j].Name
+	})
+
+	ctx.Result.RBACFindings = append(ctx.Result.RBACFindings, findings...)
+	return nil
+}
+
+func (p *Pass) runSelfExtract(ctx *passes.Context) error {
 	rootDir := ctx.Program.RootDir
 
 	var findings []types.RBACFinding
