@@ -39,6 +39,14 @@ func WriteMarkdown(w io.Writer, result *types.AnalysisResult) error {
 		writeSecretExposures(p, result.SecretExposures)
 	}
 
+	if len(result.AuthPolicies) > 0 {
+		writeAuthPolicies(p, result.AuthPolicies)
+	}
+
+	if len(result.RouteCoverage) > 0 {
+		writeRouteCoverage(p, result.RouteCoverage)
+	}
+
 	if len(result.Contradictions) > 0 {
 		writeContradictions(p, result.Contradictions)
 	}
@@ -253,6 +261,62 @@ func writeContradictions(p *printer, contradictions []types.Contradiction) {
 		}
 		p.blank()
 	}
+}
+
+func writeAuthPolicies(p *printer, policies []types.AuthPolicyInfo) {
+	p.line("## Auth Policies")
+	p.blank()
+
+	for _, pol := range policies {
+		p.line("### %s (%s)", pol.Name, pol.Kind)
+		p.line("File: %s", pol.File)
+		if pol.TargetRef != "" {
+			p.line("Target: %s", pol.TargetRef)
+		}
+
+		if len(pol.Rules) > 0 {
+			p.line("Rules:")
+			for _, r := range pol.Rules {
+				if r.Priority > 0 {
+					p.line("  - [%s] %s (priority %d)", r.Kind, r.Name, r.Priority)
+				} else {
+					p.line("  - [%s] %s", r.Kind, r.Name)
+				}
+			}
+		}
+
+		if len(pol.SkipPaths) > 0 {
+			p.line("Skip paths: %s", strings.Join(pol.SkipPaths, ", "))
+		}
+		p.blank()
+	}
+}
+
+func writeRouteCoverage(p *printer, coverage []types.RouteCoverage) {
+	p.line("## Route Coverage")
+	p.blank()
+	p.line("| Route | Kind | Backend | Policy | Covered | Mechanism |")
+	p.line("|-------|------|---------|--------|---------|-----------|")
+
+	for _, c := range coverage {
+		covered := "NO"
+		if c.Covered {
+			covered = "YES"
+		}
+		mechanism := c.Mechanism
+		if mechanism == "" {
+			mechanism = "-"
+		}
+		p.line("| %s | %s | %s | %s | %s | %s |",
+			escapePipe(c.Route),
+			escapePipe(c.RouteKind),
+			escapePipe(c.Backend),
+			escapePipe(c.Policy),
+			covered,
+			escapePipe(mechanism),
+		)
+	}
+	p.blank()
 }
 
 func formatConfigValue(cfg types.ConfigField) string {

@@ -31,6 +31,21 @@ func DetectLanguage(dir string) (string, error) {
 		}
 	}
 
+	// Check one level deep for multi-module repos (e.g., maas-api/go.mod)
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			for _, m := range markers {
+				if _, err := os.Stat(filepath.Join(dir, entry.Name(), m.file)); err == nil {
+					return m.lang, nil
+				}
+			}
+		}
+	}
+
 	return "", fmt.Errorf("cannot detect language: no go.mod, pyproject.toml, package.json, or Cargo.toml found in %s", dir)
 }
 

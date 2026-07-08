@@ -43,7 +43,13 @@ func LoadTreeSitter(dir string, lang string, stderr io.Writer) (*ir.AnalysisProg
 
 	parser, err := newParser(dir, lang)
 	if err != nil {
-		return nil, err
+		fmt.Fprintf(stderr, "warning: no tree-sitter parser for %s, running config-only analysis\n", lang)
+		return &ir.AnalysisProgram{
+			Language:   lang,
+			ModulePath: projectName,
+			RootDir:    dir,
+			Files:      make(map[string][]byte),
+		}, nil
 	}
 
 	exts := make(map[string]bool)
@@ -174,7 +180,12 @@ func LoadProject(dir string, stderr io.Writer) (*ir.AnalysisProgram, error) {
 
 	switch lang {
 	case "go":
-		return LoadGo(dir, stderr)
+		prog, goErr := LoadGo(dir, stderr)
+		if goErr != nil {
+			fmt.Fprintf(stderr, "warning: Go SSA loading failed (%v), falling back to tree-sitter\n", goErr)
+			return LoadTreeSitter(dir, lang, stderr)
+		}
+		return prog, nil
 	default:
 		return LoadTreeSitter(dir, lang, stderr)
 	}

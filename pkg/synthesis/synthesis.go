@@ -17,6 +17,7 @@ func Synthesize(result *types.AnalysisResult) {
 	contradictions = append(contradictions, detectPermissiveDefaults(result)...)
 	contradictions = append(contradictions, detectDroppedErrorsOnAuthPath(result)...)
 	contradictions = append(contradictions, detectOrphanedResources(result)...)
+	contradictions = append(contradictions, detectUncoveredRoutes(result)...)
 
 	// Sort by severity (HIGH > MEDIUM > LOW) then title for stable ordering,
 	// then assign IDs so they are deterministic regardless of detection order.
@@ -166,6 +167,35 @@ func severityRank(s string) int {
 	default:
 		return 3
 	}
+}
+
+func detectUncoveredRoutes(result *types.AnalysisResult) []types.Contradiction {
+	var contradictions []types.Contradiction
+
+	for _, cov := range result.RouteCoverage {
+		if cov.Covered || cov.Mechanism == "INTENTIONAL" {
+			continue
+		}
+
+		assumptions := []types.Assumption{
+			{
+				Location: types.Location{
+					File: cov.RouteFile,
+				},
+				Description: cov.RouteKind + " " + cov.Route + " exposes backend " + cov.Backend + " without auth policy",
+			},
+		}
+
+		contradictions = append(contradictions, types.Contradiction{
+			Title:       cov.Route + " route has no auth policy coverage",
+			Assumptions: assumptions,
+			Reality:     "Route " + cov.Route + " in " + cov.RouteFile + " has no matching AuthPolicy, AuthConfig, or gateway-level default. Traffic to this route is unauthenticated.",
+			Severity:    "MEDIUM",
+			Mitigation:  "Add an AuthPolicy targeting the route or its parent gateway.",
+		})
+	}
+
+	return contradictions
 }
 
 func detectOrphanedResources(result *types.AnalysisResult) []types.Contradiction {

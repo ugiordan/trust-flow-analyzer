@@ -122,6 +122,35 @@ type SecretExposure struct {
 	Field       string
 }
 
+// AuthPolicyInfo describes an authentication/authorization policy resource
+// extracted from Kubernetes YAML manifests or Rego policy files.
+type AuthPolicyInfo struct {
+	Name      string
+	Kind      string // AuthPolicy, AuthConfig, AuthorizationPolicy, RegoPolicy
+	File      string
+	TargetRef string
+	Rules     []AuthRule
+	SkipPaths []string
+}
+
+// AuthRule describes a single rule within an auth policy.
+type AuthRule struct {
+	Name     string
+	Kind     string // authentication, authorization, metadata
+	Priority int
+}
+
+// RouteCoverage maps a route (HTTPRoute or Ingress) to its covering auth policy.
+type RouteCoverage struct {
+	Route     string
+	RouteFile string
+	RouteKind string // HTTPRoute, Ingress
+	Policy    string // covering policy name, or "NONE"
+	Covered   bool
+	Mechanism string // direct, fallback, gateway-default, INTENTIONAL
+	Backend   string
+}
+
 // AnalysisResult holds the combined output of all analysis passes.
 type AnalysisResult struct {
 	Project         string
@@ -131,5 +160,7 @@ type AnalysisResult struct {
 	ErrorPaths      []ErrorPath
 	Lifecycles      []ResourceLifecycle
 	SecretExposures []SecretExposure
+	AuthPolicies    []AuthPolicyInfo
+	RouteCoverage   []RouteCoverage
 	Contradictions  []Contradiction
 }

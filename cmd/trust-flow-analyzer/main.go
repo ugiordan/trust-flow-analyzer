@@ -12,6 +12,7 @@ import (
 	"github.com/ugiordan/trust-flow-analyzer/pkg/output"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/authflow"
+	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/authpolicy"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/contract"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/defaults"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/errorprop"
@@ -127,6 +128,8 @@ func runAnalyze(args []string) error {
 		ErrorPaths:      []types.ErrorPath{},
 		Lifecycles:      []types.ResourceLifecycle{},
 		SecretExposures: []types.SecretExposure{},
+		AuthPolicies:    []types.AuthPolicyInfo{},
+		RouteCoverage:   []types.RouteCoverage{},
 		Contradictions:  []types.Contradiction{},
 	}
 
@@ -144,6 +147,7 @@ func runAnalyze(args []string) error {
 		&errorprop.Pass{},
 		&lifecycle.Pass{},
 		&secrets.Pass{},
+		&authpolicy.Pass{},
 	}
 
 	for _, p := range allPasses {
@@ -230,5 +234,7 @@ func printSummary(w io.Writer, result *types.AnalysisResult) {
 	fmt.Fprintf(w, "  error paths:       %d\n", len(result.ErrorPaths))
 	fmt.Fprintf(w, "  lifecycles:        %d\n", len(result.Lifecycles))
 	fmt.Fprintf(w, "  secret exposures:  %d\n", len(result.SecretExposures))
+	fmt.Fprintf(w, "  auth policies:     %d\n", len(result.AuthPolicies))
+	fmt.Fprintf(w, "  route coverage:    %d\n", len(result.RouteCoverage))
 	fmt.Fprintf(w, "  contradictions:    %d\n", len(result.Contradictions))
 }

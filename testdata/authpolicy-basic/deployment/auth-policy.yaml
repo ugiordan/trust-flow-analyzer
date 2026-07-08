@@ -1,0 +1,30 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: api-auth-policy
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: api-route
+  when:
+    - predicate: 'request.path != "/health" || request.method != "GET"'
+  rules:
+    authentication:
+      api-keys:
+        plain:
+          selector: request.headers.authorization
+        priority: 0
+      openshift-identities:
+        kubernetesTokenReview:
+          audiences:
+            - https://kubernetes.default.svc
+        priority: 1
+    authorization:
+      api-key-valid:
+        patternMatching:
+          patterns:
+            - selector: auth.metadata.apiKeyValidation.valid
+              operator: eq
+              value: "true"
+        priority: 0

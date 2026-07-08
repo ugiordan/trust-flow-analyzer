@@ -1,0 +1,23 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-route
+spec:
+  parentRefs:
+    - name: default-gateway
+      namespace: openshift-ingress
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/api
+      backendRefs:
+        - name: api-server
+          port: 8080
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /health
+      backendRefs:
+        - name: api-server
+          port: 8080
