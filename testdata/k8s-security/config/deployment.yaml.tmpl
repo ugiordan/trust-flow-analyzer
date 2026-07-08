@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Name }}
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          args:
+            - --db-host=$(DB_HOST)
+            - --db-password=$(DB_PASSWORD)
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+        {{- if .Spec.KubeRBACProxy }}
+        - name: kube-rbac-proxy
+          image: {{ .Spec.KubeRBACProxy.Image }}
+        {{- end }}

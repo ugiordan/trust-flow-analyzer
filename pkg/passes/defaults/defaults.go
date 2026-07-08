@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"go/ast"
 	"go/token"
+	types2 "go/types"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
+	"golang.org/x/tools/go/ssa"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/ir"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/platform"
@@ -42,6 +45,9 @@ func (p *Pass) runGo(ctx *passes.Context) error {
 	sort.Slice(ctx.Result.Defaults, func(i, j int) bool {
 		return ctx.Result.Defaults[i].Field < ctx.Result.Defaults[j].Field
 	})
+
+	// Analyze webhook Default() methods for security field coverage.
+	analyzeWebhookDefaults(goSSA, modulePath, ctx.Result)
 
 	return nil
 }
@@ -528,4 +534,134 @@ func isK8sAPIType(typeName string) bool {
 		}
 	}
 	return false
+}
+
+// securityFieldNames lists the field names from platform knowledge that represent
+// security components. When a webhook Default() method doesn't set these, it
+// means the security component is absent by default.
+var securityFieldNames = []string{
+	"KubeRBACProxy",
+	"OAuthProxy",
+	"TLS",
+	"Auth",
+	"Authorino",
+	"SslMode",
+	"sslMode",
+}
+
+// analyzeWebhookDefaults finds webhook Default() methods via the SSA call graph
+// and reports which security-relevant fields they set (or don't set).
+func analyzeWebhookDefaults(goSSA *ir.GoSSAData, modulePath string, result *types.AnalysisResult) {
+	seen := make(map[*ssa.Function]bool)
+
+	for fn := range goSSA.CallGraph.Nodes {
+		if fn == nil || seen[fn] {
+			continue
+		}
+		seen[fn] = true
+
+		// Only look at module functions.
+		if fn.Package() == nil || !strings.HasPrefix(fn.Package().Pkg.Path(), modulePath) {
+			continue
+		}
+
+		// Must be a method named "Default" with a receiver (webhook defaulter).
+		if fn.Name() != "Default" || fn.Signature.Recv() == nil {
+			continue
+		}
+
+		// Walk SSA blocks to find which fields are stored.
+		fieldsSet := extractStoredFields(fn)
+
+		// Determine which security fields are set and which are not.
+		var setFields, unsetFields []string
+		for _, sf := range securityFieldNames {
+			if fieldsSet[sf] {
+				setFields = append(setFields, sf)
+			} else {
+				unsetFields = append(unsetFields, sf)
+			}
+		}
+
+		// Only report if the method is non-trivial (sets at least one field)
+		// or if there are security fields it could set.
+		if len(fieldsSet) == 0 && len(unsetFields) == 0 {
+			continue
+		}
+
+		// Derive a human-friendly function name from the receiver type.
+		funcName := deriveWebhookName(fn)
+		file, line := loader.FunctionLocation(goSSA.Fset, fn)
+		relFile := loader.RelativePath(file, modulePath)
+
+		result.WebhookDefaults = append(result.WebhookDefaults, types.WebhookDefault{
+			Function:    funcName,
+			File:        relFile,
+			Line:        line,
+			FieldsSet:   setFields,
+			FieldsUnset: unsetFields,
+		})
+	}
+
+	sort.Slice(result.WebhookDefaults, func(i, j int) bool {
+		return result.WebhookDefaults[i].Function < result.WebhookDefaults[j].Function
+	})
+}
+
+// extractStoredFields walks a function's SSA blocks and returns a set of field
+// names that are stored to via FieldAddr + Store instruction pairs.
+func extractStoredFields(fn *ssa.Function) map[string]bool {
+	fields := make(map[string]bool)
+
+	if len(fn.Blocks) == 0 {
+		return fields
+	}
+
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			store, ok := instr.(*ssa.Store)
+			if !ok {
+				continue
+			}
+
+			// Check if the target of the store is a FieldAddr.
+			fieldAddr, ok := store.Addr.(*ssa.FieldAddr)
+			if !ok {
+				continue
+			}
+
+			// Get the field name from the struct type.
+			structType := fieldAddr.X.Type().Underlying()
+			ptrType, isPtr := structType.(*types2.Pointer)
+			if isPtr {
+				structType = ptrType.Elem().Underlying()
+			}
+			st, isSt := structType.(*types2.Struct)
+			if !isSt {
+				continue
+			}
+
+			if fieldAddr.Field < st.NumFields() {
+				fieldName := st.Field(fieldAddr.Field).Name()
+				fields[fieldName] = true
+			}
+		}
+	}
+
+	return fields
+}
+
+// deriveWebhookName builds "ReceiverType.Default" from the SSA function.
+func deriveWebhookName(fn *ssa.Function) string {
+	recv := fn.Signature.Recv()
+	if recv == nil {
+		return fn.Name()
+	}
+
+	typeName := recv.Type().String()
+	typeName = strings.TrimPrefix(typeName, "*")
+	if idx := strings.LastIndex(typeName, "."); idx >= 0 {
+		typeName = typeName[idx+1:]
+	}
+	return typeName + "." + fn.Name()
 }

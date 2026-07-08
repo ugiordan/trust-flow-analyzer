@@ -182,6 +182,29 @@ type MeshPolicyInfo struct {
 	Scope     string // namespace-wide, workload-specific, mesh-wide
 }
 
+// TemplateRisk captures a security-relevant pattern in a Go template or
+// templated YAML file (e.g. secrets expanded in container args, conditional
+// security sidecars, hardcoded credentials).
+type TemplateRisk struct {
+	File        string
+	Line        int
+	Kind        string // SECRET_IN_ARGS, CONDITIONAL_SECURITY, HARDCODED_CREDENTIAL
+	Description string
+	Field       string // the template field or env var involved
+	Severity    string // HIGH, MEDIUM, LOW
+}
+
+// WebhookDefault describes which security-relevant fields a webhook Default()
+// method sets (or does not set). This surfaces gaps where the defaulter could
+// enforce a secure posture but leaves it to the user.
+type WebhookDefault struct {
+	Function    string   // e.g., "ModelRegistry.Default"
+	File        string
+	Line        int
+	FieldsSet   []string // security fields the defaulter sets
+	FieldsUnset []string // security fields the defaulter does NOT set
+}
+
 // AnalysisResult holds the combined output of all analysis passes.
 type AnalysisResult struct {
 	Project          string
@@ -196,5 +219,7 @@ type AnalysisResult struct {
 	NetworkPolicies  []NetworkPolicyInfo
 	RBACFindings     []RBACFinding
 	MeshPolicies     []MeshPolicyInfo
+	TemplateRisks    []TemplateRisk
+	WebhookDefaults  []WebhookDefault
 	Contradictions   []Contradiction
 }

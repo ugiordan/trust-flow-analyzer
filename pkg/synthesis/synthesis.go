@@ -3,6 +3,7 @@ package synthesis
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/ugiordan/trust-flow-analyzer/pkg/types"
 )
@@ -21,6 +22,8 @@ func Synthesize(result *types.AnalysisResult) {
 	contradictions = append(contradictions, detectMissingNetworkPolicies(result)...)
 	contradictions = append(contradictions, detectRBACFindings(result)...)
 	contradictions = append(contradictions, detectWeakMTLS(result)...)
+	contradictions = append(contradictions, detectTemplateRisks(result)...)
+	contradictions = append(contradictions, detectInsecureWebhookDefaults(result)...)
 
 	// Sort by severity (HIGH > MEDIUM > LOW) then title for stable ordering,
 	// then assign IDs so they are deterministic regardless of detection order.
@@ -363,6 +366,93 @@ func detectRBACFindings(result *types.AnalysisResult) []types.Contradiction {
 			Severity:   f.Severity,
 			Mitigation: "Reduce scope to namespace-scoped Role or restrict resource/verb combinations.",
 		})
+	}
+
+	return contradictions
+}
+
+// detectTemplateRisks converts SECRET_IN_ARGS and CONDITIONAL_SECURITY template
+// risks into contradictions. CONDITIONAL_SECURITY findings are cross-referenced
+// with the defaults pass to strengthen the signal when the controlling field is
+// known to be optional.
+func detectTemplateRisks(result *types.AnalysisResult) []types.Contradiction {
+	var contradictions []types.Contradiction
+
+	for _, risk := range result.TemplateRisks {
+		switch risk.Kind {
+		case "SECRET_IN_ARGS":
+			contradictions = append(contradictions, types.Contradiction{
+				Title: "Secret exposed in container args via " + risk.Field,
+				Assumptions: []types.Assumption{
+					{
+						Location:    types.Location{File: risk.File, Line: risk.Line},
+						Description: "Template expands " + risk.Field + " in container args/command",
+					},
+				},
+				Reality:    "Kubelet expands env vars in container args into /proc/1/cmdline. The secret value is visible to any process that can read /proc on the node.",
+				Severity:   "HIGH",
+				Mitigation: "Mount secrets as files or use environment variables directly (without expanding in args). Avoid $(SECRET) in container args.",
+			})
+		case "CONDITIONAL_SECURITY":
+			contradictions = append(contradictions, types.Contradiction{
+				Title: "Security component conditional on " + risk.Field,
+				Assumptions: []types.Assumption{
+					{
+						Location:    types.Location{File: risk.File, Line: risk.Line},
+						Description: "Template only deploys security component when " + risk.Field + " is set",
+					},
+				},
+				Reality:    "If the CRD field " + risk.Field + " is optional (pointer type with +optional), the security component is absent by default. Users must explicitly opt in.",
+				Severity:   "MEDIUM",
+				Mitigation: "Consider making the security component deploy by default, or ensure the CRD field has a secure default value.",
+			})
+		}
+	}
+
+	return contradictions
+}
+
+// detectInsecureWebhookDefaults generates contradictions when a webhook Default()
+// method sets a security-relevant field to an insecure value, or when it leaves
+// security fields unset.
+func detectInsecureWebhookDefaults(result *types.AnalysisResult) []types.Contradiction {
+	var contradictions []types.Contradiction
+
+	// Cross-reference webhook defaults with the defaults pass to find insecure
+	// values being set by the defaulter.
+	insecureValues := map[string]bool{
+		"disable":  true,
+		"disabled": true,
+		"false":    true,
+		"none":     true,
+		"off":      true,
+	}
+
+	for _, wd := range result.WebhookDefaults {
+		// Check if any of the set fields have insecure default values from the
+		// defaults pass.
+		for _, field := range wd.FieldsSet {
+			for _, d := range result.Defaults {
+				if !strings.HasSuffix(d.Field, field) {
+					continue
+				}
+				lowerVal := strings.ToLower(d.LibraryDefault)
+				if insecureValues[lowerVal] {
+					contradictions = append(contradictions, types.Contradiction{
+						Title: wd.Function + " sets " + field + " to insecure default",
+						Assumptions: []types.Assumption{
+							{
+								Location:    types.Location{File: wd.File, Line: wd.Line},
+								Description: wd.Function + " sets " + field + " to " + d.LibraryDefault,
+							},
+						},
+						Reality:    "Webhook defaulter sets " + field + " to an insecure value (" + d.LibraryDefault + "). New CRD instances will have this security feature disabled unless the user explicitly overrides it.",
+						Severity:   "MEDIUM",
+						Mitigation: "Change the webhook default to a secure value, or require the user to explicitly set this field.",
+					})
+				}
+			}
+		}
 	}
 
 	return contradictions

@@ -59,6 +59,14 @@ func WriteMarkdown(w io.Writer, result *types.AnalysisResult) error {
 		writeMeshPolicies(p, result.MeshPolicies)
 	}
 
+	if len(result.TemplateRisks) > 0 {
+		writeTemplateRisks(p, result.TemplateRisks)
+	}
+
+	if len(result.WebhookDefaults) > 0 {
+		writeWebhookDefaults(p, result.WebhookDefaults)
+	}
+
 	if len(result.Contradictions) > 0 {
 		writeContradictions(p, result.Contradictions)
 	}
@@ -250,6 +258,35 @@ func writeSecretExposures(p *printer, exposures []types.SecretExposure) {
 		p.line("### %s at %s (line %d)", se.Pattern, se.Location.File, se.Location.Line)
 		p.line("Field: %s", se.Field)
 		p.line("Description: %s", se.Description)
+		p.blank()
+	}
+}
+
+func writeTemplateRisks(p *printer, risks []types.TemplateRisk) {
+	p.line("## Template Risks")
+	p.blank()
+
+	for _, r := range risks {
+		p.line("### %s at %s (line %d)", r.Kind, r.File, r.Line)
+		p.line("Field: %s", r.Field)
+		p.line("Severity: %s", r.Severity)
+		p.line("Description: %s", r.Description)
+		p.blank()
+	}
+}
+
+func writeWebhookDefaults(p *printer, defaults []types.WebhookDefault) {
+	p.line("## Webhook Defaults")
+	p.blank()
+
+	for _, d := range defaults {
+		p.line("### %s (%s line %d)", d.Function, d.File, d.Line)
+		if len(d.FieldsSet) > 0 {
+			p.line("Sets: %s", strings.Join(d.FieldsSet, ", "))
+		}
+		if len(d.FieldsUnset) > 0 {
+			p.line("Does NOT set: %s", strings.Join(d.FieldsUnset, ", "))
+		}
 		p.blank()
 	}
 }

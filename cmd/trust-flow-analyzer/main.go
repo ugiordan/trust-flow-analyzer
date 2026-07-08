@@ -21,6 +21,7 @@ import (
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/netpolicy"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/rbacscope"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/secrets"
+	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/template"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/platform"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/synthesis"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/types"
@@ -136,6 +137,8 @@ func runAnalyze(args []string) error {
 		NetworkPolicies:  []types.NetworkPolicyInfo{},
 		RBACFindings:     []types.RBACFinding{},
 		MeshPolicies:     []types.MeshPolicyInfo{},
+		TemplateRisks:    []types.TemplateRisk{},
+		WebhookDefaults:  []types.WebhookDefault{},
 		Contradictions:   []types.Contradiction{},
 	}
 
@@ -157,6 +160,7 @@ func runAnalyze(args []string) error {
 		&netpolicy.Pass{},
 		&rbacscope.Pass{},
 		&meshpolicy.Pass{},
+		&template.Pass{},
 	}
 
 	for _, p := range allPasses {
@@ -248,5 +252,7 @@ func printSummary(w io.Writer, result *types.AnalysisResult) {
 	fmt.Fprintf(w, "  network policies:  %d\n", len(result.NetworkPolicies))
 	fmt.Fprintf(w, "  RBAC findings:     %d\n", len(result.RBACFindings))
 	fmt.Fprintf(w, "  mesh policies:     %d\n", len(result.MeshPolicies))
+	fmt.Fprintf(w, "  template risks:    %d\n", len(result.TemplateRisks))
+	fmt.Fprintf(w, "  webhook defaults:  %d\n", len(result.WebhookDefaults))
 	fmt.Fprintf(w, "  contradictions:    %d\n", len(result.Contradictions))
 }
