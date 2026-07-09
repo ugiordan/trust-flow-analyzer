@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	types2 "go/types"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -26,10 +27,17 @@ type Pass struct{}
 func (p *Pass) Name() string { return "defaults" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
+	var err error
 	if ctx.Program.GoSSA != nil {
-		return p.runGo(ctx)
+		err = p.runGo(ctx)
+	} else {
+		err = p.runGeneric(ctx)
 	}
-	return p.runGeneric(ctx)
+	if err != nil {
+		return err
+	}
+	scanParamsEnvFiles(ctx)
+	return nil
 }
 
 func (p *Pass) runGo(ctx *passes.Context) error {
@@ -497,6 +505,91 @@ func isZeroValue(expr ast.Expr) bool {
 	default:
 		return false
 	}
+}
+
+// securityEnvKeys are substrings in params.env key names that indicate
+// security-relevant configuration.
+var securityEnvKeys = []string{
+	"NAMESPACE", "SECRET", "PASSWORD", "AUTH", "TLS", "SSL",
+	"TOKEN", "CERT", "KEY", "RBAC", "PROXY", "ENCRYPT",
+}
+
+// scanParamsEnvFiles walks the project for params.env files (kustomize overlays)
+// and flags empty values on security-critical keys as PERMISSIVE defaults.
+func scanParamsEnvFiles(ctx *passes.Context) {
+	rootDir := ctx.Program.RootDir
+	if rootDir == "" {
+		return
+	}
+
+	filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			name := info.Name()
+			if name == ".git" || name == "vendor" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Name() != "params.env" {
+			return nil
+		}
+
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+
+		rel := relPath(rootDir, path)
+		scanner := bufio.NewScanner(strings.NewReader(string(content)))
+		lineNum := 0
+
+		for scanner.Scan() {
+			lineNum++
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			upperKey := strings.ToUpper(key)
+
+			isSecurityKey := false
+			for _, substr := range securityEnvKeys {
+				if strings.Contains(upperKey, substr) {
+					isSecurityKey = true
+					break
+				}
+			}
+			if !isSecurityKey {
+				continue
+			}
+
+			if value == "" {
+				ctx.Result.Defaults = append(ctx.Result.Defaults, types.DefaultValue{
+					Field: key,
+					Location: types.Location{
+						File: rel,
+						Line: lineNum,
+					},
+					LibraryDefault:  "(empty)",
+					OperatorDefault: "(empty) params.env (kustomize)",
+					PlatformMeaning: "Empty value disables constraint. Security gate inactive when not set.",
+					Permissiveness:  "PERMISSIVE",
+				})
+			}
+		}
+
+		return nil
+	})
 }
 
 func inferOperatorDefault(value string, isDefault bool) string {
