@@ -307,7 +307,7 @@ func containsServiceName(selector, serviceName string) bool {
 
 func splitLabels(s string) []string {
 	var result []string
-	for _, part := range splitOnce(s, ",") {
+	for _, part := range strings.Split(s, ",") {
 		trimmed := trimSpace(part)
 		if trimmed != "" {
 			result = append(result, trimmed)

@@ -67,11 +67,31 @@ type Pass struct{}
 
 func (p *Pass) Name() string { return "template" }
 
+// templateRelevantAnnotationTypes lists the annotation types that the template
+// pass knows how to consume from arch-context. The gate checks for these
+// specifically so that unrelated annotation types don't suppress self-extraction.
+var templateRelevantAnnotationTypes = map[string]bool{
+	"SECRET_IN_CONTAINER_ARGS": true,
+	"CRD_CONFUSED_DEPUTY":      true,
+}
+
 func (p *Pass) Run(ctx *passes.Context) error {
-	if ctx.ArchContext != nil && len(ctx.ArchContext.SecurityAnnotations) > 0 {
+	if ctx.ArchContext != nil && hasTemplateRelevantAnnotations(ctx.ArchContext.SecurityAnnotations) {
 		return p.runFromArchContext(ctx)
 	}
 	return p.runSelfExtract(ctx)
+}
+
+// hasTemplateRelevantAnnotations returns true if any annotation has a type that
+// this pass handles, preventing unrelated annotation types from blocking
+// self-extraction.
+func hasTemplateRelevantAnnotations(annotations []passes.ArchSecurityFinding) bool {
+	for _, ann := range annotations {
+		if templateRelevantAnnotationTypes[ann.Type] {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Pass) runFromArchContext(ctx *passes.Context) error {
@@ -213,6 +233,17 @@ func scanFile(path, relPath string) []types.TemplateRisk {
 		lineNum++
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
+
+		// Reset all state on YAML document separator.
+		if trimmed == "---" {
+			inSecretKind = false
+			inContainerSpec = false
+			inArgsOrCommand = false
+			containerIndent = 0
+			argsIndent = 0
+			continue
+		}
+
 		indent := len(line) - len(strings.TrimLeft(line, " \t"))
 
 		// Track whether we're in a Secret manifest.

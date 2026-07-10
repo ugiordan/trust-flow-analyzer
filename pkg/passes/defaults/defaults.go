@@ -663,6 +663,14 @@ func analyzeWebhookDefaults(goSSA *ir.GoSSAData, modulePath string, result *type
 			continue
 		}
 
+		// Filter out non-webhook Default() methods to avoid false positives.
+		// A webhook defaulter either has a signature matching the webhook.Defaulter
+		// interface (context.Context param or runtime.Object param), or lives in
+		// a package path containing "webhook" or "api/".
+		if !looksLikeWebhookDefaulter(fn) {
+			continue
+		}
+
 		// Walk SSA blocks to find which fields are stored.
 		fieldsSet := extractStoredFields(fn)
 
@@ -757,4 +765,39 @@ func deriveWebhookName(fn *ssa.Function) string {
 		typeName = typeName[idx+1:]
 	}
 	return typeName + "." + fn.Name()
+}
+
+// looksLikeWebhookDefaulter returns true if a Default() method is likely a
+// webhook defaulter rather than an unrelated helper. It checks two signals:
+//  1. The method's signature matches webhook.Defaulter (takes context.Context
+//     or runtime.Object parameters).
+//  2. The receiver type lives in a package path containing "webhook" or "api/".
+func looksLikeWebhookDefaulter(fn *ssa.Function) bool {
+	sig := fn.Signature
+
+	// Check parameters for context.Context or runtime.Object (webhook.Defaulter
+	// interface patterns).
+	params := sig.Params()
+	for i := 0; i < params.Len(); i++ {
+		paramType := params.At(i).Type().String()
+		if strings.Contains(paramType, "context.Context") ||
+			strings.Contains(paramType, "runtime.Object") {
+			return true
+		}
+	}
+
+	// Check if the receiver's package path contains webhook or API indicators.
+	recv := sig.Recv()
+	if recv != nil {
+		recvType := recv.Type().String()
+		recvType = strings.TrimPrefix(recvType, "*")
+		lower := strings.ToLower(recvType)
+		if strings.Contains(lower, "webhook") ||
+			strings.Contains(lower, "/api/") ||
+			strings.Contains(lower, "/apis/") {
+			return true
+		}
+	}
+
+	return false
 }

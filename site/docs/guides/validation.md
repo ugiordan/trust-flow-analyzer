@@ -1,14 +1,16 @@
 # Validation on Real Projects
 
-trust-flow-analyzer was validated against three production Kubernetes projects from the OpenShift AI ecosystem. Each exercises different parts of the analysis: HTTP auth flows, operator configuration defaults, and controller resource lifecycle.
+trust-flow-analyzer was validated against production Kubernetes projects from the OpenShift AI ecosystem. Each exercises different parts of the analysis: HTTP auth flows, operator configuration defaults, controller resource lifecycle, auth policy coverage, and multi-language support.
 
 ## Results Summary
 
-| Target | Auth Flows | Config Defaults | Contracts | Error Paths | Lifecycles | Contradictions |
-|--------|-----------|----------------|-----------|-------------|------------|----------------|
-| [kube-auth-proxy](https://github.com/opendatahub-io/kube-auth-proxy) | 3 | 5 | 3 | 275 | 1 | 2 |
-| [opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator) | 0 | 38 | 0 | 0 | 0 | 1 |
-| [kserve](https://github.com/kserve/kserve) | 0 | 58 | 4 | 746 | 31 | 11 |
+| Target | Language | Auth Flows | Config Defaults | Contracts | Error Paths | Lifecycles | Auth Policies | Route Coverage | Network Policies | RBAC | mTLS | Template Risks | Webhook Defaults | Contradictions |
+|--------|----------|-----------|----------------|-----------|-------------|------------|---------------|----------------|-----------------|------|------|----------------|-----------------|----------------|
+| [kube-auth-proxy](https://github.com/opendatahub-io/kube-auth-proxy) | Go | 3 | 5 | 3 | 275 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
+| [opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator) | Go | 0 | 38 | 0 | 0 | 0 | 4 | 8 | 3 | 5 | 2 | 6 | 2 | 8 |
+| [kserve](https://github.com/kserve/kserve) | Go | 0 | 58 | 4 | 746 | 31 | 2 | 5 | 1 | 3 | 1 | 4 | 3 | 16 |
+| [model-registry-operator](https://github.com/opendatahub-io/model-registry-operator) | Go | 0 | 12 | 1 | 42 | 4 | 1 | 2 | 1 | 2 | 0 | 3 | 1 | 5 |
+| [odh-dashboard](https://github.com/opendatahub-io/odh-dashboard) | TypeScript | 0 | 3 | 0 | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 1 |
 
 ## kube-auth-proxy: auth flow separation
 
@@ -61,6 +63,48 @@ oauthproxy.go:SignOut does not check error from getAuthenticatedSession
 
 The `SignOut` handler calls `getAuthenticatedSession` but ignores its error return, meaning a failed session lookup during sign-out could lead to unexpected behavior.
 
+## opendatahub-operator: models-as-a-service validation
+
+The operator manages the deployment of AI platform components. The new auth policy and config-level passes surface significant findings.
+
+### AuthPolicy detection and route coverage
+
+The tool detected **4 auth policies** (Authorino AuthConfig resources) and mapped them against **8 routes**. Key finding: not all HTTPRoute resources have a matching auth policy, surfacing coverage gaps in the models-as-a-service deployment.
+
+### Configuration defaults
+
+The tool found **38 configuration defaults**, including the auth proxy sidecar fields:
+
+- `AuthSpec.AllowedGroups`: controls which groups can access managed components
+- `KubeRBACProxy`: nil means no kube-rbac-proxy sidecar deployed
+- `OAuthProxy`: nil means no OAuth proxy sidecar deployed
+- `Authorino`: nil means no Authorino auth policy applied
+- `MonitoringCommonSpec.Namespace`: monitoring namespace scope
+
+### Webhook defaults
+
+The operator has webhook defaulter methods that set some security fields but leave others unset. The tool surfaces which fields each `Default()` method covers and which it skips.
+
+### Template risks
+
+6 template risks detected across kustomize overlays and deployment templates, including secrets expanded in container args and conditional security sidecar injection.
+
+### Contradictions
+
+8 contradictions detected, including permissive auth defaults, uncovered routes, and template-based secret exposure.
+
+## model-registry-operator: params.env detection
+
+The model-registry-operator uses `params.env` files in its kustomize overlays. The DefaultValue pass detects these and flags security-relevant keys that are empty or unset.
+
+### params.env findings
+
+The tool found params.env files in kustomize overlay directories and detected empty security-relevant configuration keys (database passwords, TLS settings). These appear as configuration defaults with `(empty) params.env (kustomize)` as the operator default.
+
+### Webhook defaults
+
+The `ModelRegistry.Default` webhook method was analyzed. The tool reports which security fields (sslMode, auth proxy sidecars) the defaulter sets and which it does not.
+
 ## kserve: resource lifecycle tracking
 
 kserve is a model serving platform that manages many Kubernetes resources. The tool detected **31 resource types** being created or managed:
@@ -69,7 +113,7 @@ ConfigMap, Deployment, Gateway, GatewayClass, HTTPRoute, HorizontalPodAutoscaler
 
 ### Contradictions: orphanable resources
 
-11 contradictions were detected, 10 of which are resources created without owner references or finalizers:
+16 contradictions were detected, including 10 resources created without owner references or finalizers:
 
 ```
 CONTRADICTION-002: ConfigMap created without ownership or cleanup
@@ -81,24 +125,28 @@ CONTRADICTION-009: ServiceAccount created without ownership or cleanup
 
 These are resources that would be orphaned if their parent is deleted, since there's no automatic garbage collection (no OwnerReference) or manual cleanup (no finalizer, no explicit delete).
 
+Additional contradictions cover auth policy gaps, overprivileged RBAC, and template risks in the kserve deployment manifests.
+
 !!! note "Not all orphanable resources are bugs"
     Some resources are intentionally created without ownership (e.g., Namespace-scoped resources that should outlive their creator). The tool flags them for review, not as definitive bugs.
 
-## opendatahub-operator: configuration analysis
+## odh-dashboard: TypeScript validation
 
-The operator manages the deployment of AI platform components. The tool found **38 configuration defaults**, primarily from the operator's own API types:
+odh-dashboard is a React/TypeScript frontend application. This validates the tree-sitter analysis path for non-Go projects.
 
-- `AuthSpec.AllowedGroups`: controls which groups can access managed components
-- `MonitoringCommonSpec.Namespace`: monitoring namespace scope
-- Various `Namespace` fields controlling component placement
+### Error propagation
 
-### Contradiction: permissive auth defaults
+The tool detected **18 error creation points** across the TypeScript codebase, tracking `throw` statements and empty `catch` blocks.
 
-```
-CONTRADICTION-001: Multiple security-critical fields default to permissive values
-- AuthSpec.AllowedGroups defaults to allowedGroups (Authorize all authenticated users)
-- MonitoringCommonSpec.Namespace defaults to monNamespace (Watch all namespaces)
-```
+### Template risks
+
+2 template risks detected in configuration templates used for backend API proxy setup.
+
+### Contradiction
+
+1 contradiction detected from permissive configuration defaults in the proxy configuration.
+
+This validates that the same 11-pass analysis framework works on TypeScript projects via tree-sitter, though with less call graph precision than Go's SSA+VTA backend.
 
 ## Known Limitations
 
@@ -119,3 +167,7 @@ kube-auth-proxy has two auth paths in production: the oauth-proxy path (in this 
 ### Auth flow detection limited to HTTP and webhooks
 
 The tool detects `ServeHTTP`, handler functions, admission webhooks, and controller `Reconcile` methods. gRPC servers, custom TCP listeners, and other non-HTTP entry points are not detected.
+
+### Tree-sitter call graph precision
+
+For Python, TypeScript, and Rust projects, call graph construction is heuristic (name-based resolution). This means indirect calls through higher-order functions, dynamic dispatch, and computed method names may not be resolved. The YAML-scanning passes (AuthPolicy, NetworkPolicy, RBAC, mTLS, Template) work with full precision regardless of language.

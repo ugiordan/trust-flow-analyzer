@@ -144,7 +144,7 @@ func extractMeshPolicy(doc map[string]interface{}, kind, relPath string) types.M
 
 	switch kind {
 	case "PeerAuthentication":
-		mtlsMode, scope = extractPeerAuth(spec)
+		mtlsMode, scope = extractPeerAuth(spec, namespace)
 	case "DestinationRule":
 		mtlsMode = extractDestinationRuleTLS(spec)
 		scope = "workload-specific"
@@ -176,7 +176,7 @@ func extractMeshPolicy(doc map[string]interface{}, kind, relPath string) types.M
 	}
 }
 
-func extractPeerAuth(spec map[string]interface{}) (string, string) {
+func extractPeerAuth(spec map[string]interface{}, namespace string) (string, string) {
 	if spec == nil {
 		return "UNSET", "namespace-wide"
 	}
@@ -199,6 +199,10 @@ func extractPeerAuth(spec map[string]interface{}) (string, string) {
 	}
 
 	// If namespace is istio-system or empty and no selector, it's mesh-wide.
+	if scope == "namespace-wide" && (namespace == "istio-system" || namespace == "") {
+		scope = "mesh-wide"
+	}
+
 	return mode, scope
 }
 
