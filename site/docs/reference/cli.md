@@ -13,7 +13,7 @@ trust-flow-analyzer analyze [flags] <directory>
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-output` | `trust-flow-map.md` | Output file path |
-| `-format` | `markdown` | Output format: `markdown` or `json` |
+| `-format` | `markdown` | Output format: `markdown`, `json`, or `html` |
 | `-arch-context` | _(none)_ | Path to architecture-analyzer JSON output for component boundary scoping |
 
 ### Output formats
@@ -28,6 +28,22 @@ trust-flow-analyzer analyze -format json -output - /path/to/repo
 
 # JSON output to file
 trust-flow-analyzer analyze -format json -output results.json /path/to/repo
+```
+
+**HTML** (`-format html`): self-contained HTML report with interactive features. The output is a single file with inline CSS and JavaScript (no external dependencies). Features include:
+
+- Dark/light theme toggle (persisted in localStorage)
+- Collapsible sections for each analysis pass (contradictions expanded by default)
+- Color-coded severity badges (HIGH=red, MEDIUM=orange, LOW=yellow)
+- Summary dashboard with finding counts per pass
+- Route coverage table with green/red/yellow coverage status
+- Text-based auth flow path visualization
+- Search/filter across all findings
+- Responsive layout for mobile and desktop
+
+```bash
+# HTML report to file
+trust-flow-analyzer analyze -format html -output report.html /path/to/repo
 ```
 
 ### Architecture context integration

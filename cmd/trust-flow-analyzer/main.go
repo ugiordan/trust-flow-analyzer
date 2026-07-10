@@ -42,7 +42,7 @@ Commands:
 
 Flags for analyze:
   -output     Output file path (default: trust-flow-map.md)
-  -format     Output format: markdown, json (default: markdown)
+  -format     Output format: markdown, json, html (default: markdown)
 `
 
 var version = "dev"
@@ -82,7 +82,7 @@ func runAnalyze(args []string) error {
 
 	// Validate format flag.
 	switch *formatFlag {
-	case "markdown", "json":
+	case "markdown", "json", "html":
 		// supported
 	default:
 		fmt.Fprintf(os.Stderr, "warning: format %q is not supported, defaulting to markdown\n", *formatFlag)
@@ -207,6 +207,8 @@ func runAnalyze(args []string) error {
 	switch *formatFlag {
 	case "json":
 		writeErr = output.WriteJSON(tmpFile, result)
+	case "html":
+		writeErr = output.WriteHTML(tmpFile, result)
 	default:
 		writeErr = output.WriteMarkdown(tmpFile, result)
 	}
