@@ -915,6 +915,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="DefaultValue Pass">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#webhook-defaulting-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Webhook defaulting analysis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#paramsenv-kustomize-parsing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        params.env kustomize parsing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -944,6 +972,72 @@
     <span class="md-ellipsis">
       
         Lifecycle Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#secrets-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secrets Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authpolicy-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AuthPolicy Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#networkpolicy-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NetworkPolicy Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rbac-scope-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RBAC Scope Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mtls-detection-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mTLS Detection Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#template-rendering-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Rendering Pass
       
     </span>
   </a>
@@ -1263,6 +1357,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="DefaultValue Pass">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#webhook-defaulting-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Webhook defaulting analysis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#paramsenv-kustomize-parsing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        params.env kustomize parsing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1292,6 +1414,72 @@
     <span class="md-ellipsis">
       
         Lifecycle Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#secrets-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secrets Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authpolicy-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AuthPolicy Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#networkpolicy-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NetworkPolicy Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rbac-scope-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RBAC Scope Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mtls-detection-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mTLS Detection Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#template-rendering-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Template Rendering Pass
       
     </span>
   </a>
@@ -1378,7 +1566,7 @@
 
 
 <h1 id="analysis-passes">Analysis Passes<a class="headerlink" href="#analysis-passes" title="Permanent link">¶</a></h1>
-<p>trust-flow-analyzer runs five analysis passes sequentially, then synthesizes contradictions across their results.</p>
+<p>trust-flow-analyzer runs eleven analysis passes, then synthesizes contradictions across their results. The first five passes (AuthFlow, DefaultValue, Contract, ErrorProp, Lifecycle) operate on source code via SSA (Go) or tree-sitter (Python, TypeScript, Rust). The remaining six passes (Secrets, AuthPolicy, NetworkPolicy, RBAC Scope, mTLS Detection, Template Rendering) scan source files and YAML manifests directly.</p>
 <h2 id="authflow-pass">AuthFlow Pass<a class="headerlink" href="#authflow-pass" title="Permanent link">¶</a></h2>
 <p><strong>Purpose</strong>: trace credential arrival to access decision, group into distinct paths.</p>
 <p><strong>How it works</strong>:</p>
@@ -1424,8 +1612,14 @@
 <li>For struct literal fields, checks if the field name matches the platform knowledge database</li>
 <li>For flag definitions (<code>flag.String</code>, <code>pflag.StringVar</code>, etc.), extracts default values</li>
 <li>Cross-references with platform semantics to determine permissiveness</li>
+<li>Analyzes webhook <code>Default()</code> methods for security field coverage</li>
+<li>Scans <code>params.env</code> files (kustomize overlays) for security-relevant configuration</li>
 </ol>
 <p><strong>Type qualification</strong>: uses <code>TypesInfo</code> to qualify field names as <code>StructType.FieldName</code> to avoid false positives.</p>
+<h3 id="webhook-defaulting-analysis">Webhook defaulting analysis<a class="headerlink" href="#webhook-defaulting-analysis" title="Permanent link">¶</a></h3>
+<p>The pass finds webhook <code>Default()</code> methods via the SSA call graph and checks which security-relevant fields the defaulter sets or leaves unset. Fields tracked include auth proxy sidecars (KubeRBACProxy, OAuthProxy, Authorino), SSL modes, and other security components. When a webhook defaulter does not set these fields, it surfaces the gap as a <code>WebhookDefault</code> finding.</p>
+<h3 id="paramsenv-kustomize-parsing">params.env kustomize parsing<a class="headerlink" href="#paramsenv-kustomize-parsing" title="Permanent link">¶</a></h3>
+<p>The pass walks the project for <code>params.env</code> files (commonly used in kustomize overlays). For each file, it parses <code>KEY=VALUE</code> lines and flags security-relevant keys (matching substrings like PASSWORD, SECRET, TOKEN, KEY) that are empty or unset. These appear as <code>DefaultValue</code> findings with <code>(empty) params.env (kustomize)</code> as the operator default.</p>
 <h2 id="contract-pass">Contract Pass<a class="headerlink" href="#contract-pass" title="Permanent link">¶</a></h2>
 <p><strong>Purpose</strong>: for functions returning errors, check if all callers handle the error.</p>
 <p><strong>How it works</strong>:</p>
@@ -1458,13 +1652,78 @@
 <li>Infers the resource type from the call arguments (skipping <code>context.Context</code>)</li>
 <li>Determines if the resource is orphanable (no owner, finalizer, or delete)</li>
 </ol>
+<h2 id="secrets-pass">Secrets Pass<a class="headerlink" href="#secrets-pass" title="Permanent link">¶</a></h2>
+<p><strong>Purpose</strong>: detect hardcoded secrets and secret exposure in source code.</p>
+<p><strong>How it works</strong>:</p>
+<ol>
+<li>For Go projects (SSA mode): scans AST for string literals assigned to fields or variables with secret-related names (PASSWORD, SECRET, TOKEN, KEY)</li>
+<li>Detects env var patterns like <code>$(DB_PASSWORD)</code> or <code>$(API_SECRET_KEY)</code> in string literals</li>
+<li>Flags functions that pass secrets as arguments where they could be logged or exposed</li>
+<li>Reports each finding with a pattern classification: <code>ENV_IN_ARGS</code>, <code>HARDCODED_SECRET</code></li>
+</ol>
+<h2 id="authpolicy-pass">AuthPolicy Pass<a class="headerlink" href="#authpolicy-pass" title="Permanent link">¶</a></h2>
+<p><strong>Purpose</strong>: scan YAML manifests for authentication and authorization policy resources.</p>
+<p><strong>How it works</strong>:</p>
+<ol>
+<li>Walks the project directory for YAML files</li>
+<li>Parses each YAML document and checks the <code>kind</code> field against supported auth resource kinds: AuthPolicy, AuthConfig, AuthorizationPolicy, RegoPolicy</li>
+<li>Extracts the policy name, target references, rules (authentication, authorization, metadata), and skip paths</li>
+<li>Maps routes (HTTPRoute, Ingress) to their covering auth policies to compute route coverage</li>
+<li>Reports uncovered routes (routes with no matching auth policy) for contradiction synthesis</li>
+</ol>
+<h2 id="networkpolicy-pass">NetworkPolicy Pass<a class="headerlink" href="#networkpolicy-pass" title="Permanent link">¶</a></h2>
+<p><strong>Purpose</strong>: extract Kubernetes NetworkPolicy resources and report their scope.</p>
+<p><strong>How it works</strong>:</p>
+<ol>
+<li>Walks the project directory for YAML files</li>
+<li>Parses NetworkPolicy resources, extracting namespace, pod selectors, and policy types (Ingress/Egress)</li>
+<li>Summarizes ingress sources and egress destinations</li>
+<li>Feeds into contradiction synthesis to detect namespaces without any network policy</li>
+</ol>
+<h2 id="rbac-scope-pass">RBAC Scope Pass<a class="headerlink" href="#rbac-scope-pass" title="Permanent link">¶</a></h2>
+<p><strong>Purpose</strong>: detect overprivileged RBAC patterns in ClusterRole and ClusterRoleBinding resources.</p>
+<p><strong>How it works</strong>:</p>
+<ol>
+<li>Walks the project directory for YAML files</li>
+<li>Parses ClusterRole and ClusterRoleBinding resources</li>
+<li>Flags overprivileged patterns: wildcard verbs (<code>*</code>), cluster-wide secrets access, broad resource group grants</li>
+<li>Assigns severity (HIGH, MEDIUM, LOW) based on the scope and nature of the privilege</li>
+</ol>
+<h2 id="mtls-detection-pass">mTLS Detection Pass<a class="headerlink" href="#mtls-detection-pass" title="Permanent link">¶</a></h2>
+<p><strong>Purpose</strong>: scan service mesh policy resources for mTLS configuration.</p>
+<p><strong>How it works</strong>:</p>
+<ol>
+<li>Walks the project directory for YAML files</li>
+<li>Parses Istio and OpenShift Service Mesh resources: PeerAuthentication, DestinationRule, ServiceMeshMemberRoll, ServiceMeshControlPlane</li>
+<li>Extracts mTLS mode (STRICT, PERMISSIVE, DISABLE, UNSET) and scope (namespace-wide, workload-specific, mesh-wide)</li>
+<li>Feeds into contradiction synthesis to flag PERMISSIVE or DISABLE modes</li>
+</ol>
+<h2 id="template-rendering-pass">Template Rendering Pass<a class="headerlink" href="#template-rendering-pass" title="Permanent link">¶</a></h2>
+<p><strong>Purpose</strong>: scan Go templates and templated YAML files for security-relevant patterns.</p>
+<p><strong>How it works</strong>:</p>
+<ol>
+<li>Walks the project directory for template files (<code>.tmpl</code>, <code>.tpl</code>) and YAML files</li>
+<li>Detects three risk categories:<ul>
+<li><strong>SECRET_IN_ARGS</strong>: secrets expanded via <code>$(VAR)</code> patterns in container command/args fields</li>
+<li><strong>CONDITIONAL_SECURITY</strong>: security-critical sidecars or settings gated by template conditionals (<code>{{ if }}</code>)</li>
+<li><strong>HARDCODED_CREDENTIAL</strong>: literal credentials in template files</li>
+</ul>
+</li>
+<li>Each finding includes the file, line, risk kind, and severity</li>
+</ol>
 <h2 id="contradiction-synthesis">Contradiction Synthesis<a class="headerlink" href="#contradiction-synthesis" title="Permanent link">¶</a></h2>
-<p>Runs after all passes. Detects four types of cross-file contradictions:</p>
+<p>Runs after all passes. Detects ten types of cross-file contradictions:</p>
 <ol>
 <li><strong>Auth without authz</strong>: PERMISSIVE auth paths (authentication exists, authorization doesn't)</li>
 <li><strong>Permissive defaults</strong>: 2+ security-critical fields defaulting to permissive values</li>
 <li><strong>Dropped errors on auth path</strong>: errors created and silently dropped in auth-related functions</li>
 <li><strong>Orphaned resources</strong>: K8s resources created without ownership or cleanup</li>
+<li><strong>Uncovered routes</strong>: HTTPRoute or Ingress resources with no matching auth policy</li>
+<li><strong>Missing network policies</strong>: namespaces that deploy workloads but have no NetworkPolicy</li>
+<li><strong>Overprivileged RBAC</strong>: ClusterRoles or ClusterRoleBindings with excessive permissions</li>
+<li><strong>Weak mTLS</strong>: mesh policies using PERMISSIVE or DISABLE mTLS mode</li>
+<li><strong>Template security risks</strong>: secrets exposed in templates, conditional security sidecars</li>
+<li><strong>Insecure webhook defaults</strong>: webhook defaulters that do not set security-relevant fields</li>
 </ol>
 <p>Contradictions are sorted by severity (HIGH &gt; MEDIUM &gt; LOW) then by title, and assigned stable sequential IDs.</p>
 

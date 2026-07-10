@@ -494,10 +494,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#five-analysis-passes" class="md-nav__link">
+  <a href="#multi-language-support" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Five analysis passes
+        Multi-language support
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#eleven-analysis-passes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Eleven analysis passes
       
     </span>
   </a>
@@ -1259,10 +1270,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#five-analysis-passes" class="md-nav__link">
+  <a href="#multi-language-support" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Five analysis passes
+        Multi-language support
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#eleven-analysis-passes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Eleven analysis passes
       
     </span>
   </a>
@@ -1331,7 +1353,7 @@
 
 
 <h1 id="trust-flow-analyzer">trust-flow-analyzer<a class="headerlink" href="#trust-flow-analyzer" title="Permanent link">¶</a></h1>
-<p>Deterministic cross-file trust flow extraction for Go source code. No LLM calls. Same output every run.</p>
+<p>Deterministic cross-file trust flow extraction for Go, Python, TypeScript, and Rust source code. No LLM calls. Same output every run.</p>
 <h2 id="what-it-does">What it does<a class="headerlink" href="#what-it-does" title="Permanent link">¶</a></h2>
 <p>Static analysis tools like CodeQL can tell you "data flows from A to B." trust-flow-analyzer tells you <strong>"A assumes B validates the data, but B doesn't."</strong></p>
 <p>It extracts cross-file implicit assumptions that contradict each other, a pattern known in formal verification as <a href="https://en.wikipedia.org/wiki/Assume-guarantee_reasoning">assume-guarantee reasoning</a>.</p>
@@ -1344,7 +1366,46 @@
 <li><code>authz/auth.go</code>: SubjectAccessReview exists (noted as mitigation)</li>
 </ul>
 <p>The agent dismissed the first two because it saw the SAR in the third file. But the SAR is on a <strong>different code path</strong>. The agent confused which mitigation applies to which path because it doesn't maintain a structured map of parallel trust flows.</p>
-<h2 id="five-analysis-passes">Five analysis passes<a class="headerlink" href="#five-analysis-passes" title="Permanent link">¶</a></h2>
+<h2 id="multi-language-support">Multi-language support<a class="headerlink" href="#multi-language-support" title="Permanent link">¶</a></h2>
+<p>trust-flow-analyzer automatically detects the project language and selects the appropriate analysis backend.</p>
+<table>
+<thead>
+<tr>
+<th>Language</th>
+<th>Backend</th>
+<th>Call Graph</th>
+<th>Entry Points</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Go</strong></td>
+<td>SSA + VTA (<code>go/packages</code>)</td>
+<td>Precise, interface-aware</td>
+<td><code>ServeHTTP</code>, webhooks, <code>Reconcile</code></td>
+</tr>
+<tr>
+<td><strong>Python</strong></td>
+<td>tree-sitter</td>
+<td>Heuristic name resolution</td>
+<td>Flask/FastAPI routes, decorators</td>
+</tr>
+<tr>
+<td><strong>TypeScript</strong></td>
+<td>tree-sitter</td>
+<td>Heuristic name resolution</td>
+<td>Express handlers, Next.js routes</td>
+</tr>
+<tr>
+<td><strong>Rust</strong></td>
+<td>tree-sitter</td>
+<td>Heuristic name resolution</td>
+<td><code>#[handler]</code>, Actix/Axum extractors</td>
+</tr>
+</tbody>
+</table>
+<p>Go gets the most precise analysis (SSA + VTA). Python, TypeScript, and Rust use tree-sitter for parsing and heuristic call graph construction, providing the same 11-pass analysis with less precision on indirect calls.</p>
+<h2 id="eleven-analysis-passes">Eleven analysis passes<a class="headerlink" href="#eleven-analysis-passes" title="Permanent link">¶</a></h2>
 <table>
 <thead>
 <tr>
@@ -1359,7 +1420,7 @@
 </tr>
 <tr>
 <td><strong>DefaultValue</strong></td>
-<td>Finds what empty/nil/zero means at each config level. Cross-references with K8s platform semantics.</td>
+<td>Finds what empty/nil/zero means at each config level. Cross-references with K8s platform semantics. Includes webhook defaulting analysis and params.env kustomize parsing.</td>
 </tr>
 <tr>
 <td><strong>Contract</strong></td>
@@ -1373,29 +1434,71 @@
 <td><strong>Lifecycle</strong></td>
 <td>Traces K8s resource creation, ownership, and cleanup. Flags orphanable resources.</td>
 </tr>
+<tr>
+<td><strong>Secrets</strong></td>
+<td>Detects hardcoded secrets, env var secret patterns, and secret exposure in function arguments.</td>
+</tr>
+<tr>
+<td><strong>AuthPolicy</strong></td>
+<td>Scans YAML manifests for AuthPolicy, AuthConfig, AuthorizationPolicy, and Rego policy resources. Maps route coverage.</td>
+</tr>
+<tr>
+<td><strong>NetworkPolicy</strong></td>
+<td>Extracts Kubernetes NetworkPolicy resources. Reports pod selectors, ingress/egress rules.</td>
+</tr>
+<tr>
+<td><strong>RBAC Scope</strong></td>
+<td>Detects overprivileged ClusterRole and ClusterRoleBinding patterns (wildcard verbs, cluster-wide secrets access).</td>
+</tr>
+<tr>
+<td><strong>mTLS Detection</strong></td>
+<td>Scans Istio PeerAuthentication and DestinationRule resources. Reports mTLS mode (STRICT, PERMISSIVE, DISABLE) and scope.</td>
+</tr>
+<tr>
+<td><strong>Template Rendering</strong></td>
+<td>Scans Go templates and templated YAML for secrets in container args, conditional security sidecars, and hardcoded credentials.</td>
+</tr>
 </tbody>
 </table>
-<p>After all passes run, <strong>contradiction synthesis</strong> detects cross-file assumption violations.</p>
+<p>After all passes run, <strong>contradiction synthesis</strong> detects cross-file assumption violations across 10 contradiction categories.</p>
 <h2 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">¶</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>go<span class="w"> </span>install<span class="w"> </span>github.com/ugiordan/trust-flow-analyzer/cmd/trust-flow-analyzer@latest
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>/path/to/go/project
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>/path/to/project
 </code></pre></div>
+<p>Output defaults to <code>trust-flow-map.md</code>. Use <code>-format json</code> for machine-readable output.</p>
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">¶</a></h2>
-<p>Uses <code>golang.org/x/tools/go/packages</code> for type-checked loading, SSA for interprocedural analysis, and VTA for precise call graph construction. Same stack as <a href="https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck">govulncheck</a>.</p>
+<p>For Go projects, uses <code>golang.org/x/tools/go/packages</code> for type-checked loading, SSA for interprocedural analysis, and VTA for precise call graph construction. Same stack as <a href="https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck">govulncheck</a>.</p>
+<p>For Python, TypeScript, and Rust projects, uses tree-sitter for AST parsing and builds heuristic call graphs via name resolution.</p>
+<p>All languages share the same intermediate representation (IR), pass framework, and synthesis engine.</p>
 <pre class="mermaid"><code>graph LR
-    A[go/packages] --&gt; B[SSA Build]
-    B --&gt; C[VTA Call Graph]
-    C --&gt; D[AuthFlow Pass]
-    C --&gt; E[DefaultValue Pass]
-    C --&gt; F[Contract Pass]
-    C --&gt; G[ErrorProp Pass]
-    C --&gt; H[Lifecycle Pass]
-    D &amp; E &amp; F &amp; G &amp; H --&gt; I[Synthesis]
-    I --&gt; J[trust-flow-map.md]</code></pre>
+    subgraph "Go Path"
+        A1[go/packages] --&gt; B1[SSA Build]
+        B1 --&gt; C1[VTA Call Graph]
+    end
+    subgraph "Tree-sitter Path"
+        A2[tree-sitter] --&gt; B2[AST Parse]
+        B2 --&gt; C2[Heuristic Call Graph]
+    end
+    C1 --&gt; IR[Shared IR]
+    C2 --&gt; IR
+    IR --&gt; P1[AuthFlow]
+    IR --&gt; P2[DefaultValue]
+    IR --&gt; P3[Contract]
+    IR --&gt; P4[ErrorProp]
+    IR --&gt; P5[Lifecycle]
+    IR --&gt; P6[Secrets]
+    IR --&gt; P7[AuthPolicy]
+    IR --&gt; P8[NetworkPolicy]
+    IR --&gt; P9[RBAC Scope]
+    IR --&gt; P10[mTLS]
+    IR --&gt; P11[Template]
+    P1 &amp; P2 &amp; P3 &amp; P4 &amp; P5 &amp; P6 &amp; P7 &amp; P8 &amp; P9 &amp; P10 &amp; P11 --&gt; S[Synthesis]
+    S --&gt; MD[trust-flow-map.md]
+    S --&gt; JSON[JSON output]</code></pre>
 <h2 id="integration">Integration<a class="headerlink" href="#integration" title="Permanent link">¶</a></h2>
 <ul>
 <li><strong>adversarial-reviewing</strong>: produces <code>trust-flow-map.md</code> consumed via <code>--context trust-flow=path/to/map.md</code></li>
-<li><strong>architecture-analyzer</strong>: optionally takes arch-analyzer output for component boundary scoping</li>
+<li><strong>architecture-analyzer</strong>: feed <code>--arch-context</code> with arch-analyzer JSON output for component boundary scoping and richer cross-component contradiction detection</li>
 <li><strong>code-claim-verifier</strong>: provides ground truth for CCV to check agent claims against</li>
 </ul>
 

@@ -564,6 +564,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
+  <a href="#release-binaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release binaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#from-source" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1211,6 +1222,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
+  <a href="#release-binaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release binaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#from-source" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1312,20 +1334,33 @@
 
 
 <h1 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">¶</a></h1>
+<h2 id="release-binaries">Release binaries<a class="headerlink" href="#release-binaries" title="Permanent link">¶</a></h2>
+<p>Pre-built binaries for v0.1.0 are available on the <a href="https://github.com/ugiordan/trust-flow-analyzer/releases/tag/v0.1.0">GitHub releases page</a>.</p>
+<p>Download the binary for your platform:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Linux amd64</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>curl<span class="w"> </span>-Lo<span class="w"> </span>trust-flow-analyzer<span class="w"> </span>https://github.com/ugiordan/trust-flow-analyzer/releases/download/v0.1.0/trust-flow-analyzer-linux-amd64
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>chmod<span class="w"> </span>+x<span class="w"> </span>trust-flow-analyzer
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>sudo<span class="w"> </span>mv<span class="w"> </span>trust-flow-analyzer<span class="w"> </span>/usr/local/bin/
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># macOS arm64</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>curl<span class="w"> </span>-Lo<span class="w"> </span>trust-flow-analyzer<span class="w"> </span>https://github.com/ugiordan/trust-flow-analyzer/releases/download/v0.1.0/trust-flow-analyzer-darwin-arm64
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>chmod<span class="w"> </span>+x<span class="w"> </span>trust-flow-analyzer
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>sudo<span class="w"> </span>mv<span class="w"> </span>trust-flow-analyzer<span class="w"> </span>/usr/local/bin/
+</code></pre></div>
 <h2 id="from-source">From source<a class="headerlink" href="#from-source" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/ugiordan/trust-flow-analyzer.git
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>trust-flow-analyzer
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>make<span class="w"> </span>build
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/ugiordan/trust-flow-analyzer.git
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>trust-flow-analyzer
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>make<span class="w"> </span>build
 </code></pre></div>
 <p>The binary <code>trust-flow-analyzer</code> will be created in the project root.</p>
 <h2 id="with-go-install">With <code>go install</code><a class="headerlink" href="#with-go-install" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>go<span class="w"> </span>install<span class="w"> </span>github.com/ugiordan/trust-flow-analyzer/cmd/trust-flow-analyzer@latest
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>go<span class="w"> </span>install<span class="w"> </span>github.com/ugiordan/trust-flow-analyzer/cmd/trust-flow-analyzer@latest
 </code></pre></div>
 <h2 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Permanent link">¶</a></h2>
 <ul>
-<li>Go 1.23 or later (1.25+ recommended for analyzing projects that require it)</li>
-<li>The target project must have a <code>go.mod</code> file</li>
-<li>The Go version used to build trust-flow-analyzer must be &gt;= the Go version required by the target project</li>
+<li>Go 1.26 or later</li>
+<li>For Go project analysis: the target project must have a <code>go.mod</code> file, and the Go version used to build trust-flow-analyzer must be &gt;= the Go version required by the target project</li>
+<li>For Python, TypeScript, and Rust analysis: no additional requirements (tree-sitter grammars are embedded in the binary)</li>
 </ul>
 
 

@@ -784,6 +784,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#auth-proxy-sidecar-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auth proxy sidecar fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-connection-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database connection security
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#paramsenv-scanning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        params.env scanning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-matching-works" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1222,6 +1255,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#auth-proxy-sidecar-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auth proxy sidecar fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-connection-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database connection security
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#paramsenv-scanning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        params.env scanning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-matching-works" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1349,6 +1415,26 @@
 <td>PERMISSIVE</td>
 </tr>
 <tr>
+<td><code>sslMode</code> / <code>SslMode</code></td>
+<td>SSL/TLS mode for database connections. When set to <code>disable</code>, passwords transmitted in cleartext.</td>
+<td>PERMISSIVE</td>
+</tr>
+<tr>
+<td><code>KubeRBACProxy</code></td>
+<td>No kube-rbac-proxy sidecar deployed. API endpoints have no auth.</td>
+<td>PERMISSIVE</td>
+</tr>
+<tr>
+<td><code>OAuthProxy</code></td>
+<td>No OAuth proxy sidecar deployed. API endpoints have no auth.</td>
+<td>PERMISSIVE</td>
+</tr>
+<tr>
+<td><code>Authorino</code></td>
+<td>No Authorino auth policy deployed. Service has no auth enforcement.</td>
+<td>PERMISSIVE</td>
+</tr>
+<tr>
 <td><code>InsecureSkipVerify</code></td>
 <td>TLS certificate verification enabled</td>
 <td>RESTRICTIVE</td>
@@ -1365,6 +1451,31 @@
 </tr>
 </tbody>
 </table>
+<h2 id="auth-proxy-sidecar-fields">Auth proxy sidecar fields<a class="headerlink" href="#auth-proxy-sidecar-fields" title="Permanent link">¶</a></h2>
+<p>The <code>KubeRBACProxy</code>, <code>OAuthProxy</code>, and <code>Authorino</code> fields are particularly important in the RHOAI ecosystem. Operators manage these auth proxy sidecars for their components:</p>
+<ul>
+<li><strong>KubeRBACProxy</strong>: when nil/absent, the operator does not inject a kube-rbac-proxy sidecar. The application's API is exposed without authentication or authorization. This is the default auth mechanism for many RHOAI components.</li>
+<li><strong>OAuthProxy</strong>: when nil/absent, the operator does not inject an OAuth proxy sidecar. The application's API is exposed without authentication.</li>
+<li><strong>Authorino</strong>: when nil/absent, no Authorino-based auth policy is applied to the service. This is the auth mechanism used by models-as-a-service in RHOAI.</li>
+</ul>
+<p>These fields are checked in the DefaultValue pass and also referenced by the webhook defaulting analysis (to determine which security fields a <code>Default()</code> method sets or skips).</p>
+<h2 id="database-connection-security">Database connection security<a class="headerlink" href="#database-connection-security" title="Permanent link">¶</a></h2>
+<p>The <code>sslMode</code> / <code>SslMode</code> fields control SSL/TLS for database connections:</p>
+<ul>
+<li>When set to <code>disable</code>, database connections use plaintext and passwords are transmitted in cleartext</li>
+<li>The DefaultValue pass flags this as PERMISSIVE when the default is <code>disable</code> or empty (no encryption)</li>
+<li>This is relevant for model-registry-operator and similar components that connect to PostgreSQL backends</li>
+</ul>
+<h2 id="paramsenv-scanning">params.env scanning<a class="headerlink" href="#paramsenv-scanning" title="Permanent link">¶</a></h2>
+<p>The DefaultValue pass scans <code>params.env</code> files used in kustomize overlays. These files contain <code>KEY=VALUE</code> pairs that configure component deployments. The tool detects security-relevant keys based on substring matching:</p>
+<p><strong>Matched key substrings</strong>: PASSWORD, SECRET, TOKEN, KEY</p>
+<p>When a params.env file contains a security-relevant key that is empty or set to a placeholder value, the tool reports it as a configuration default with operator context.</p>
+<p>Example from model-registry-operator:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a># config/overlays/odh/params.env
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>DATABASE_PASSWORD=
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>DATABASE_SSL_MODE=disable
+</code></pre></div>
+<p>This produces two DefaultValue findings: an empty database password and a disabled SSL mode.</p>
 <h2 id="how-matching-works">How matching works<a class="headerlink" href="#how-matching-works" title="Permanent link">¶</a></h2>
 <p>The defaults pass matches struct field names in composite literals and flag definitions against the knowledge base. Matching is type-qualified when type information is available:</p>
 <ol>
@@ -1374,12 +1485,12 @@
 <p>This prevents false positives from common field names like <code>Namespace</code> appearing in unrelated structs.</p>
 <h2 id="extending-the-knowledge-base">Extending the knowledge base<a class="headerlink" href="#extending-the-knowledge-base" title="Permanent link">¶</a></h2>
 <p>The knowledge base is in <code>pkg/platform/knowledge.go</code>. To add a new field:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nx">k</span><span class="p">.</span><span class="nx">entries</span><span class="p">[</span><span class="s">"NewField"</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">FieldSemantics</span><span class="p">{</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="nx">Field</span><span class="p">:</span><span class="w">          </span><span class="s">"NewField"</span><span class="p">,</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nx">EmptyMeaning</span><span class="p">:</span><span class="w">   </span><span class="s">"What empty/nil means for this field"</span><span class="p">,</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nx">Permissiveness</span><span class="p">:</span><span class="w"> </span><span class="s">"PERMISSIVE"</span><span class="p">,</span><span class="w"> </span><span class="c1">// or RESTRICTIVE, NEUTRAL</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="nx">Description</span><span class="p">:</span><span class="w">    </span><span class="s">"Detailed explanation"</span><span class="p">,</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nx">k</span><span class="p">.</span><span class="nx">entries</span><span class="p">[</span><span class="s">"NewField"</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">FieldSemantics</span><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="nx">Field</span><span class="p">:</span><span class="w">          </span><span class="s">"NewField"</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nx">EmptyMeaning</span><span class="p">:</span><span class="w">   </span><span class="s">"What empty/nil means for this field"</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nx">Permissiveness</span><span class="p">:</span><span class="w"> </span><span class="s">"PERMISSIVE"</span><span class="p">,</span><span class="w"> </span><span class="c1">// or RESTRICTIVE, NEUTRAL</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nx">Description</span><span class="p">:</span><span class="w">    </span><span class="s">"Detailed explanation"</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">}</span>
 </code></pre></div>
 
 

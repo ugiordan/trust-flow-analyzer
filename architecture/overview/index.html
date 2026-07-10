@@ -1034,13 +1034,52 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#architecture-context-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture context data flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-ssa-vta" class="md-nav__link">
+  <a href="#why-ssa-vta-go" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why SSA + VTA
+        Why SSA + VTA (Go)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-tree-sitter-python-typescript-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why tree-sitter (Python, TypeScript, Rust)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dual-mode-operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dual-mode operation
       
     </span>
   </a>
@@ -1274,13 +1313,52 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#architecture-context-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture context data flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-ssa-vta" class="md-nav__link">
+  <a href="#why-ssa-vta-go" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why SSA + VTA
+        Why SSA + VTA (Go)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-tree-sitter-python-typescript-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why tree-sitter (Python, TypeScript, Rust)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dual-mode-operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dual-mode operation
       
     </span>
   </a>
@@ -1404,56 +1482,136 @@
 <p>trust-flow-analyzer operates at a different abstraction level from tools like CodeQL, Joern, or Semgrep. Those tools answer "does data flow from A to B?" trust-flow-analyzer answers "A assumes B validates the data, but B doesn't."</p>
 <p>This is based on <strong>assume-guarantee reasoning</strong> from formal verification: components make assumptions about their environment, and invalid assumptions cause failures.</p>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">¶</a></h2>
+<p>The tool operates in dual mode: SSA+VTA for Go projects (precise, interface-aware analysis) and tree-sitter for Python, TypeScript, and Rust projects (heuristic, name-based analysis). Both paths feed into the same intermediate representation consumed by all 11 passes.</p>
 <pre class="mermaid"><code>graph TB
-    subgraph Loading
+    subgraph "Language Detection"
+        LD[langdetect] --&gt; |go.mod| GoPath
+        LD --&gt; |pyproject.toml, package.json, Cargo.toml| TSPath
+    end
+
+    subgraph GoPath ["Go: SSA + VTA"]
         A[go/packages] --&gt; B[Type-checked AST]
         B --&gt; C[SSA Program]
         C --&gt; D[VTA Call Graph]
     end
 
-    subgraph "Analysis Passes"
-        D --&gt; E[AuthFlow]
-        B --&gt; F[DefaultValue]
-        D --&gt; G[Contract]
-        D --&gt; H[ErrorProp]
-        D --&gt; I[Lifecycle]
+    subgraph TSPath ["Python / TypeScript / Rust: tree-sitter"]
+        TS1[tree-sitter Parse] --&gt; TS2[Function &amp; Call Extraction]
+        TS2 --&gt; TS3[Heuristic Call Graph]
+    end
+
+    D --&gt; IR[Shared IR: AnalysisProgram]
+    TS3 --&gt; IR
+
+    subgraph "Source Code Passes"
+        IR --&gt; E[AuthFlow]
+        IR --&gt; F[DefaultValue]
+        IR --&gt; G[Contract]
+        IR --&gt; H[ErrorProp]
+        IR --&gt; I[Lifecycle]
+        IR --&gt; K[Secrets]
+    end
+
+    subgraph "YAML Scanning Passes"
+        YAML[Project YAML files] --&gt; L[AuthPolicy]
+        YAML --&gt; M[NetworkPolicy]
+        YAML --&gt; N[RBAC Scope]
+        YAML --&gt; O[mTLS Detection]
+        YAML --&gt; P[Template Rendering]
+    end
+
+    subgraph "Arch Context (optional)"
+        AC[architecture-analyzer JSON] --&gt; ACL[Component Boundaries]
+        ACL --&gt; J
     end
 
     subgraph Synthesis
-        E &amp; F &amp; G &amp; H &amp; I --&gt; J[Contradiction Detection]
+        E &amp; F &amp; G &amp; H &amp; I &amp; K &amp; L &amp; M &amp; N &amp; O &amp; P --&gt; J[Contradiction Detection]
     end
 
-    J --&gt; K[Markdown Output]</code></pre>
-<h2 id="why-ssa-vta">Why SSA + VTA<a class="headerlink" href="#why-ssa-vta" title="Permanent link">¶</a></h2>
+    J --&gt; MD[Markdown Output]
+    J --&gt; JSON[JSON Output]</code></pre>
+<h3 id="architecture-context-data-flow">Architecture context data flow<a class="headerlink" href="#architecture-context-data-flow" title="Permanent link">¶</a></h3>
+<p>When <code>--arch-context</code> is provided, the tool loads an architecture-analyzer JSON output file containing component definitions. This enriches the analysis:</p>
+<ol>
+<li><strong>Component scoping</strong>: findings are attributed to specific architectural components</li>
+<li><strong>Cross-component detection</strong>: contradictions that span component boundaries are flagged with the component names involved</li>
+<li><strong>Boundary awareness</strong>: the synthesis engine uses component boundaries to weight cross-component assumptions higher than intra-component ones</li>
+</ol>
+<pre class="mermaid"><code>graph LR
+    AA[arch-analyzer scan] --&gt; JSON[arch.json]
+    JSON --&gt; TFA[trust-flow-analyzer --arch-context arch.json]
+    TFA --&gt; MAP[trust-flow-map.md]
+    MAP --&gt; AR[adversarial-reviewing --context]</code></pre>
+<h2 id="why-ssa-vta-go">Why SSA + VTA (Go)<a class="headerlink" href="#why-ssa-vta-go" title="Permanent link">¶</a></h2>
 <ul>
 <li><strong>SSA</strong> (Static Single Assignment) decomposes code into a form where each variable is assigned exactly once, making data flow analysis precise</li>
 <li><strong>VTA</strong> (Variable Type Analysis) resolves interface calls to concrete implementations, giving accurate call graphs for Go code with interfaces</li>
 <li>This is the same stack used by <code>govulncheck</code>, the official Go vulnerability scanner</li>
 </ul>
+<h2 id="why-tree-sitter-python-typescript-rust">Why tree-sitter (Python, TypeScript, Rust)<a class="headerlink" href="#why-tree-sitter-python-typescript-rust" title="Permanent link">¶</a></h2>
+<ul>
+<li><strong>Fast parsing</strong>: tree-sitter provides incremental, error-tolerant parsing for all three languages</li>
+<li><strong>Consistent extraction</strong>: the same extraction patterns (functions, call sites, decorators, error patterns) work across languages</li>
+<li><strong>Heuristic call graphs</strong>: name-based resolution handles most direct function calls and method calls, covering the common case for security analysis</li>
+</ul>
+<p>The trade-off: tree-sitter analysis misses indirect calls (callbacks, dynamic dispatch, computed names) that SSA+VTA handles precisely for Go.</p>
+<h2 id="dual-mode-operation">Dual-mode operation<a class="headerlink" href="#dual-mode-operation" title="Permanent link">¶</a></h2>
+<p>The intermediate representation (<code>ir.AnalysisProgram</code>) abstracts over both backends:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ir.AnalysisProgram
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── Language     (go, python, typescript, rust)
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── ModulePath
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── RootDir
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── Functions    (extracted function info)
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>├── CallSites    (extracted call sites)
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>├── Callees      (call graph: caller -&gt; callee)
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>├── Callers      (call graph: callee -&gt; caller)
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>├── Files        (file path -&gt; content)
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>├── GoSSA        (nil for non-Go)
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>│   ├── SSA
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│   ├── Fset
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│   ├── Packages
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│   └── CallGraph
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>└── ErrorPatterns (tree-sitter extracted)
+</code></pre></div>
+<p>Passes check <code>Program.GoSSA != nil</code> to decide whether to use SSA-based or IR-based analysis. The six YAML-scanning passes (AuthPolicy, NetworkPolicy, RBAC, mTLS, Template, Secrets) operate directly on file content and work identically for all languages.</p>
 <h2 id="module-scoping">Module scoping<a class="headerlink" href="#module-scoping" title="Permanent link">¶</a></h2>
 <p>Analysis is scoped to the target module only. Functions from the standard library and vendored dependencies appear in the call graph (needed for accurate reachability) but are excluded from findings. This prevents the output from being flooded with stdlib noise.</p>
 <h2 id="determinism">Determinism<a class="headerlink" href="#determinism" title="Permanent link">¶</a></h2>
 <p>The output is deterministic: same input produces same output on every run. This is achieved by:</p>
 <ul>
-<li>Sorting all function lists by their SSA string representation</li>
+<li>Sorting all function lists by their SSA string representation (Go) or by file path + line (tree-sitter)</li>
 <li>Sorting findings by severity then title before assigning IDs</li>
 <li>Using BFS with deterministic queue ordering for call graph traversal</li>
 <li>No randomness or timestamp-dependent logic anywhere</li>
 </ul>
 <h2 id="package-structure">Package structure<a class="headerlink" href="#package-structure" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pkg/
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── types/       # Shared data structures
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── loader/      # Package loading, SSA, VTA call graph
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── platform/    # K8s platform knowledge database
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── passes/
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│   ├── pass.go       # Pass interface
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│   ├── authflow/     # Authentication/authorization flow detection
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│   ├── defaults/     # Configuration default analysis
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│   ├── contract/     # Function contract verification
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│   ├── errorprop/    # Error propagation tracing
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>│   └── lifecycle/    # K8s resource lifecycle tracking
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>├── synthesis/   # Cross-pass contradiction detection
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>└── output/      # Markdown output generation
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pkg/
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>├── ir/          # Shared intermediate representation (AnalysisProgram)
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>├── langdetect/  # Project language detection
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>├── loader/      # Go: package loading, SSA, VTA call graph
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>├── treesitter/  # Python/TS/Rust: parsing, call graph construction
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>│   ├── parser.go
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>│   ├── callgraph.go
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>│   ├── python.go
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>│   ├── typescript.go
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>│   └── rust.go
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>├── platform/    # K8s platform knowledge database
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>├── passes/
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>│   ├── pass.go        # Pass interface and context
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>│   ├── authflow/      # Authentication/authorization flow detection
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>│   ├── defaults/      # Configuration default analysis + webhook + params.env
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>│   ├── contract/      # Function contract verification
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>│   ├── errorprop/     # Error propagation tracing
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>│   ├── lifecycle/     # K8s resource lifecycle tracking
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>│   ├── secrets/       # Secret exposure detection
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>│   ├── authpolicy/    # Auth policy YAML scanning
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>│   ├── netpolicy/     # NetworkPolicy YAML scanning
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>│   ├── rbacscope/     # RBAC ClusterRole/Binding scanning
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>│   ├── meshpolicy/    # Istio/OSSM mTLS policy scanning
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>│   └── template/      # Template rendering risk scanning
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>├── synthesis/   # Cross-pass contradiction detection (10 rules)
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>└── output/      # Markdown and JSON output generation
 </code></pre></div>
 <h2 id="comparison-with-existing-tools">Comparison with existing tools<a class="headerlink" href="#comparison-with-existing-tools" title="Permanent link">¶</a></h2>
 <table>
@@ -1461,6 +1619,7 @@
 <tr>
 <th>Tool</th>
 <th>Approach</th>
+<th>Languages</th>
 <th>Limitation</th>
 </tr>
 </thead>
@@ -1468,26 +1627,37 @@
 <tr>
 <td>CodeQL</td>
 <td>Whole-program database, query language</td>
+<td>Many</td>
 <td>Requires compilation, no assumption extraction</td>
 </tr>
 <tr>
 <td>Joern</td>
 <td>Code property graph, Scala queries</td>
+<td>Many</td>
 <td>Low-level (AST+CFG+PDG), no component abstraction</td>
 </tr>
 <tr>
 <td>Semgrep</td>
 <td>Pattern matching, cross-file taint</td>
+<td>Many</td>
 <td>Can't reason about what empty config means</td>
 </tr>
 <tr>
 <td>govulncheck</td>
 <td>VTA call graphs for reachability</td>
+<td>Go</td>
 <td>Only checks if vulnerable code is reachable</td>
 </tr>
 <tr>
+<td>Kubescape</td>
+<td>K8s manifest scanning</td>
+<td>YAML</td>
+<td>No source code analysis, no cross-file synthesis</td>
+</tr>
+<tr>
 <td><strong>trust-flow-analyzer</strong></td>
-<td>SSA + VTA + platform semantics</td>
+<td>SSA + VTA + tree-sitter + platform semantics</td>
+<td>Go, Python, TS, Rust</td>
 <td>Extracts what components assume about each other</td>
 </tr>
 </tbody>
