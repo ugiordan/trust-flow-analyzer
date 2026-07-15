@@ -27,6 +27,13 @@ type Pass struct{}
 func (p *Pass) Name() string { return "defaults" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
+	// Merge custom security fields from user config.
+	if ctx.CustomConfig != nil {
+		for _, sf := range ctx.CustomConfig.SecurityFields {
+			securityFieldNames = append(securityFieldNames, sf)
+		}
+	}
+
 	var err error
 	if ctx.Program.GoSSA != nil {
 		err = p.runGo(ctx)

@@ -32,6 +32,14 @@ var skipDirs = map[string]bool{
 	"out":          true,
 }
 
+// AddSkipDirs adds custom directory names to the skip list. This is called by
+// the CLI when a user config provides custom skip_dirs.
+func AddSkipDirs(dirs []string) {
+	for _, d := range dirs {
+		skipDirs[d] = true
+	}
+}
+
 // LoadTreeSitter loads a non-Go project via tree-sitter parsing and returns an
 // ir.AnalysisProgram with heuristic call graph data. GoSSA is nil.
 func LoadTreeSitter(dir string, lang string, stderr io.Writer) (*ir.AnalysisProgram, error) {

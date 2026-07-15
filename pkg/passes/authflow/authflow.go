@@ -9,6 +9,7 @@ import (
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/config"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/ir"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
@@ -85,6 +86,16 @@ type Pass struct{}
 func (p *Pass) Name() string { return "authflow" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
+	// Merge custom auth patterns from user config.
+	if ctx.CustomConfig != nil {
+		for _, ap := range ctx.CustomConfig.AuthPatterns {
+			patterns = append(patterns, authPattern{
+				substring: ap.Name,
+				kind:      ap.Kind,
+			})
+		}
+	}
+
 	if ctx.Program.GoSSA != nil {
 		return p.runGo(ctx)
 	}
@@ -125,6 +136,13 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 	for _, fn := range prog.Functions {
 		if isGenericEntryPoint(fn) {
 			entryFuncs = append(entryFuncs, fn)
+			continue
+		}
+		// Check custom entry points from user config.
+		if ctx.CustomConfig != nil {
+			if matchesCustomEntryPoint(fn, ctx.CustomConfig.EntryPoints) {
+				entryFuncs = append(entryFuncs, fn)
+			}
 		}
 	}
 
@@ -288,6 +306,24 @@ func isGenericEntryPoint(fn ir.FunctionInfo) bool {
 		return true
 	}
 
+	return false
+}
+
+// matchesCustomEntryPoint checks if a function matches any user-defined entry
+// point pattern (decorator or function name).
+func matchesCustomEntryPoint(fn ir.FunctionInfo, entryPoints []config.CustomEntryPoint) bool {
+	for _, ep := range entryPoints {
+		if ep.Decorator != "" {
+			for _, dec := range fn.Decorators {
+				if strings.Contains(dec, ep.Decorator) {
+					return true
+				}
+			}
+		}
+		if ep.FuncName != "" && fn.Name == ep.FuncName {
+			return true
+		}
+	}
 	return false
 }
 

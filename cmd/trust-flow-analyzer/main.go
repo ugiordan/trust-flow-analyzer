@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/config"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/diff"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/output"
@@ -49,6 +50,7 @@ Flags for analyze:
   -output     Output file path (default: trust-flow-map.md)
   -format     Output format: markdown, json, html, sarif (default: markdown)
   -baseline   Path to baseline JSON to diff against (outputs only new/worsened findings)
+  -config     Path to YAML config file with custom rules (optional)
 
 Flags for diff:
   -format     Output format: text, json, sarif (default: text)
@@ -90,6 +92,7 @@ func runAnalyze(args []string) error {
 	formatFlag := fs.String("format", "markdown", "output format")
 	archContextFlag := fs.String("arch-context", "", "path to architecture-analyzer output (optional)")
 	baselineFlag := fs.String("baseline", "", "path to baseline JSON to diff against (outputs only new/worsened findings)")
+	configFlag := fs.String("config", "", "path to YAML config file with custom rules (optional)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -128,6 +131,19 @@ func runAnalyze(args []string) error {
 		}
 	}
 
+	// Load custom config if provided.
+	var userConfig *config.Config
+	if *configFlag != "" {
+		var cfgErr error
+		userConfig, cfgErr = config.LoadConfig(*configFlag)
+		if cfgErr != nil {
+			return fmt.Errorf("loading config from %q: %w", *configFlag, cfgErr)
+		}
+		fmt.Fprintf(os.Stderr, "loaded config: %d platform_knowledge, %d auth_patterns, %d entry_points, %d security_fields, %d skip_dirs\n",
+			len(userConfig.PlatformKnowledge), len(userConfig.AuthPatterns), len(userConfig.EntryPoints),
+			len(userConfig.SecurityFields), len(userConfig.SkipDirs))
+	}
+
 	if fs.NArg() == 0 {
 		return fmt.Errorf("directory argument required")
 	}
@@ -146,6 +162,12 @@ func runAnalyze(args []string) error {
 		return fmt.Errorf("%s is not a directory", absDir)
 	}
 
+	// Merge custom skip dirs into the loader before loading the project.
+	if userConfig != nil && len(userConfig.SkipDirs) > 0 {
+		loader.AddSkipDirs(userConfig.SkipDirs)
+		fmt.Fprintf(os.Stderr, "added %d custom skip dirs\n", len(userConfig.SkipDirs))
+	}
+
 	fmt.Fprintf(os.Stderr, "loading project from %s...\n", absDir)
 	prog, err := loader.LoadProject(absDir, os.Stderr)
 	if err != nil {
@@ -154,6 +176,17 @@ func runAnalyze(args []string) error {
 	fmt.Fprintf(os.Stderr, "detected language: %s\n", prog.Language)
 
 	plat := platform.NewKnowledge()
+
+	// Merge custom platform knowledge into the knowledge base.
+	if userConfig != nil {
+		for _, pk := range userConfig.PlatformKnowledge {
+			plat.AddCustom(pk.Field, platform.FieldSemantics{
+				Field:          pk.Field,
+				EmptyMeaning:   pk.EmptyMeaning,
+				Permissiveness: pk.Permissiveness,
+			})
+		}
+	}
 	result := &types.AnalysisResult{
 		Project:            filepath.Base(absDir),
 		AuthFlows:          []types.AuthFlow{},
@@ -175,10 +208,11 @@ func runAnalyze(args []string) error {
 	}
 
 	ctx := &passes.Context{
-		Program:     prog,
-		Platform:    plat,
-		Result:      result,
-		ArchContext: archCtx,
+		Program:      prog,
+		Platform:     plat,
+		Result:       result,
+		ArchContext:  archCtx,
+		CustomConfig: userConfig,
 	}
 
 	allPasses := []passes.Pass{
@@ -203,7 +237,7 @@ func runAnalyze(args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "synthesizing contradictions...\n")
-	synthesis.Synthesize(result)
+	synthesis.Synthesize(result, archCtx)
 
 	// Run posture check AFTER synthesis (it reads contradictions).
 	posturePass := &posture.Pass{}

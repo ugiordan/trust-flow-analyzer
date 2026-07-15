@@ -30,6 +30,12 @@ func (k *Knowledge) Lookup(field string) (FieldSemantics, bool) {
 	return fs, ok
 }
 
+// AddCustom adds or replaces a field's semantics in the knowledge base.
+// This is used to merge user-provided platform knowledge from config files.
+func (k *Knowledge) AddCustom(field string, semantics FieldSemantics) {
+	k.entries[field] = semantics
+}
+
 func (k *Knowledge) loadK8sSemantics() {
 	k.entries["audiences"] = FieldSemantics{
 		Field:          "audiences",

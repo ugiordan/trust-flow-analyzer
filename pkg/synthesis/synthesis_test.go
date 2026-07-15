@@ -1,14 +1,16 @@
 package synthesis
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/types"
 )
 
 func TestSynthesizeEmpty(t *testing.T) {
 	result := &types.AnalysisResult{Project: "test"}
-	Synthesize(result)
+	Synthesize(result, nil)
 
 	if len(result.Contradictions) != 0 {
 		t.Errorf("expected 0 contradictions, got %d", len(result.Contradictions))
@@ -30,7 +32,7 @@ func TestDetectAuthWithoutAuthz(t *testing.T) {
 		},
 	}
 
-	Synthesize(result)
+	Synthesize(result, nil)
 
 	if len(result.Contradictions) == 0 {
 		t.Fatal("expected at least one contradiction for auth without authz")
@@ -57,7 +59,34 @@ func TestDetectPermissiveDefaults(t *testing.T) {
 		},
 	}
 
-	Synthesize(result)
+	Synthesize(result, nil)
+
+	if len(result.Contradictions) == 0 {
+		t.Fatal("expected at least one contradiction for multiple permissive defaults")
+	}
+
+	// Two auth-domain fields should produce a HIGH severity contradiction.
+	found := false
+	for _, c := range result.Contradictions {
+		if c.Severity == "HIGH" && strings.Contains(c.Title, "authentication fields") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected HIGH severity contradiction for multiple permissive auth fields")
+	}
+}
+
+func TestDetectPermissiveDefaultsSingleAuth(t *testing.T) {
+	result := &types.AnalysisResult{
+		Project: "test",
+		Defaults: []types.DefaultValue{
+			{Field: "audiences", Permissiveness: "PERMISSIVE", LibraryDefault: "nil", PlatformMeaning: "accept all"},
+		},
+	}
+
+	Synthesize(result, nil)
 
 	found := false
 	for _, c := range result.Contradictions {
@@ -67,7 +96,210 @@ func TestDetectPermissiveDefaults(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected MEDIUM severity contradiction for multiple permissive defaults")
+		t.Error("expected MEDIUM severity contradiction for single permissive auth field")
+	}
+}
+
+func TestDetectPermissiveDefaultsCrossDomain(t *testing.T) {
+	result := &types.AnalysisResult{
+		Project: "test",
+		Defaults: []types.DefaultValue{
+			{Field: "audiences", Permissiveness: "PERMISSIVE", LibraryDefault: "nil", PlatformMeaning: "accept all"},
+			{Field: "Namespace", Permissiveness: "PERMISSIVE", LibraryDefault: "", PlatformMeaning: "watch all namespaces"},
+		},
+	}
+
+	Synthesize(result, nil)
+
+	// AUTH + SCOPE cross-domain should produce a HIGH cluster-wide open access contradiction.
+	found := false
+	for _, c := range result.Contradictions {
+		if c.Severity == "HIGH" && strings.Contains(c.Title, "luster-wide open access") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected HIGH severity contradiction for auth+scope cross-domain interaction")
+	}
+}
+
+func TestDetectMitigatedByDeployment(t *testing.T) {
+	result := &types.AnalysisResult{
+		Project: "test",
+		AuthFlows: []types.AuthFlow{
+			{
+				Name:    "api",
+				Posture: "PERMISSIVE",
+				Entry:   types.Location{File: "handler.go", Function: "ServeHTTP"},
+				Authentication: &types.AuthStep{
+					Location: types.Location{File: "auth.go", Function: "ValidateToken"},
+				},
+			},
+		},
+	}
+
+	archCtx := &passes.ArchContext{
+		Deployments: []passes.ArchDeployment{
+			{
+				Name:       "my-service",
+				Containers: []string{"main"},
+				Sidecars:   []string{"kube-rbac-proxy"},
+			},
+		},
+	}
+
+	Synthesize(result, archCtx)
+
+	if len(result.Contradictions) == 0 {
+		t.Fatal("expected at least one contradiction")
+	}
+
+	// The auth contradiction should be downgraded to LOW.
+	for _, c := range result.Contradictions {
+		if strings.Contains(c.Title, "no effective authorization") {
+			if c.Severity != "LOW" {
+				t.Errorf("expected LOW severity after mitigation, got %s", c.Severity)
+			}
+			if !strings.Contains(c.Mitigation, "kube-rbac-proxy") {
+				t.Errorf("expected mitigation to mention kube-rbac-proxy, got %q", c.Mitigation)
+			}
+			if !strings.Contains(c.Mitigation, "my-service") {
+				t.Errorf("expected mitigation to mention deployment name, got %q", c.Mitigation)
+			}
+		}
+	}
+}
+
+func TestDetectMitigatedByDeploymentNilArchCtx(t *testing.T) {
+	result := &types.AnalysisResult{
+		Project: "test",
+		AuthFlows: []types.AuthFlow{
+			{
+				Name:    "api",
+				Posture: "PERMISSIVE",
+				Entry:   types.Location{File: "handler.go", Function: "ServeHTTP"},
+				Authentication: &types.AuthStep{
+					Location: types.Location{File: "auth.go", Function: "ValidateToken"},
+				},
+			},
+		},
+	}
+
+	// nil archCtx should not change severity.
+	Synthesize(result, nil)
+
+	for _, c := range result.Contradictions {
+		if strings.Contains(c.Title, "no effective authorization") {
+			if c.Severity != "HIGH" {
+				t.Errorf("expected HIGH severity without arch context, got %s", c.Severity)
+			}
+		}
+	}
+}
+
+func TestDetectMitigatedByDeploymentNoAuthSidecar(t *testing.T) {
+	result := &types.AnalysisResult{
+		Project: "test",
+		AuthFlows: []types.AuthFlow{
+			{
+				Name:    "api",
+				Posture: "PERMISSIVE",
+				Entry:   types.Location{File: "handler.go", Function: "ServeHTTP"},
+				Authentication: &types.AuthStep{
+					Location: types.Location{File: "auth.go", Function: "ValidateToken"},
+				},
+			},
+		},
+	}
+
+	archCtx := &passes.ArchContext{
+		Deployments: []passes.ArchDeployment{
+			{
+				Name:       "my-service",
+				Containers: []string{"main", "logging-sidecar"},
+				Sidecars:   []string{},
+			},
+		},
+	}
+
+	// No auth sidecar should not change severity.
+	Synthesize(result, archCtx)
+
+	for _, c := range result.Contradictions {
+		if strings.Contains(c.Title, "no effective authorization") {
+			if c.Severity != "HIGH" {
+				t.Errorf("expected HIGH severity without auth sidecar, got %s", c.Severity)
+			}
+		}
+	}
+}
+
+func TestDetectMitigatedByDeploymentOAuthProxy(t *testing.T) {
+	result := &types.AnalysisResult{
+		Project: "test",
+		AuthFlows: []types.AuthFlow{
+			{
+				Name:    "api",
+				Posture: "PERMISSIVE",
+				Entry:   types.Location{File: "handler.go", Function: "ServeHTTP"},
+				Authentication: &types.AuthStep{
+					Location: types.Location{File: "auth.go", Function: "ValidateToken"},
+				},
+			},
+		},
+	}
+
+	archCtx := &passes.ArchContext{
+		Deployments: []passes.ArchDeployment{
+			{
+				Name:       "my-service",
+				Containers: []string{"main", "oauth-proxy"},
+			},
+		},
+	}
+
+	Synthesize(result, archCtx)
+
+	for _, c := range result.Contradictions {
+		if strings.Contains(c.Title, "no effective authorization") {
+			if c.Severity != "LOW" {
+				t.Errorf("expected LOW severity after oauth-proxy mitigation, got %s", c.Severity)
+			}
+			if !strings.Contains(c.Mitigation, "oauth-proxy") {
+				t.Errorf("expected mitigation to mention oauth-proxy, got %q", c.Mitigation)
+			}
+		}
+	}
+}
+
+func TestClassifyDefaultDomain(t *testing.T) {
+	tests := []struct {
+		field string
+		want  string
+	}{
+		{"AllowedGroups", "auth"},
+		{"audiences", "auth"},
+		{"email-domain", "auth"},
+		{"EmailDomain", "auth"},
+		{"AllowedOrganizations", "auth"},
+		{"InsecureSkipVerify", "tls"},
+		{"sslMode", "tls"},
+		{"InsecureSkipNonce", "tls"},
+		{"Namespace", "scope"},
+		{"KubeRBACProxy", "proxy"},
+		{"OAuthProxy", "proxy"},
+		{"Authorino", "proxy"},
+		{"SomeRandomField", "other"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			got := classifyDefaultDomain(tt.field)
+			if got != tt.want {
+				t.Errorf("classifyDefaultDomain(%q) = %q, want %q", tt.field, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -83,7 +315,7 @@ func TestDetectOrphanedResources(t *testing.T) {
 		},
 	}
 
-	Synthesize(result)
+	Synthesize(result, nil)
 
 	found := false
 	for _, c := range result.Contradictions {
@@ -119,7 +351,7 @@ func TestContradictionIDsAreSequential(t *testing.T) {
 		},
 	}
 
-	Synthesize(result)
+	Synthesize(result, nil)
 
 	for i, c := range result.Contradictions {
 		expected := "CONTRADICTION-"

@@ -5,13 +5,15 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/types"
 )
 
 // Synthesize detects contradictions across the analysis results.
 // It looks for patterns where components make incompatible assumptions
 // about each other (assume-guarantee violations).
-func Synthesize(result *types.AnalysisResult) {
+// When archCtx is provided, deployment context is used to detect mitigated findings.
+func Synthesize(result *types.AnalysisResult, archCtx *passes.ArchContext) {
 	var contradictions []types.Contradiction
 
 	contradictions = append(contradictions, detectAuthWithoutAuthz(result)...)
@@ -25,6 +27,11 @@ func Synthesize(result *types.AnalysisResult) {
 	contradictions = append(contradictions, detectTemplateRisks(result)...)
 	contradictions = append(contradictions, detectInsecureWebhookDefaults(result)...)
 	contradictions = append(contradictions, detectOptionalFieldsWithoutValidation(result)...)
+
+	// Apply deployment-context mitigation when arch context is available.
+	if archCtx != nil {
+		contradictions = detectMitigatedByDeployment(contradictions, archCtx)
+	}
 
 	// Sort by severity (HIGH > MEDIUM > LOW) then title for stable ordering,
 	// then assign IDs so they are deterministic regardless of detection order.
@@ -79,6 +86,44 @@ func detectAuthWithoutAuthz(result *types.AnalysisResult) []types.Contradiction 
 	return contradictions
 }
 
+// classifyDefaultDomain returns the security domain for a permissive default field.
+// Domains: "auth", "tls", "scope", "proxy", "other".
+func classifyDefaultDomain(field string) string {
+	lower := strings.ToLower(field)
+
+	// AUTH domain: identity and access control fields.
+	authFields := []string{"allowedgroups", "audiences", "email-domain", "emaildomain",
+		"allowedorganizations", "allowedemails"}
+	for _, af := range authFields {
+		if strings.Contains(lower, af) {
+			return "auth"
+		}
+	}
+
+	// TLS domain: transport security fields.
+	tlsFields := []string{"insecureskipverify", "sslmode", "insecureskipnonce", "tlsskipverify"}
+	for _, tf := range tlsFields {
+		if strings.Contains(lower, tf) {
+			return "tls"
+		}
+	}
+
+	// SCOPE domain: namespace/cluster-wide access fields.
+	if lower == "namespace" || strings.Contains(lower, "watchnamespace") {
+		return "scope"
+	}
+
+	// PROXY domain: optional auth sidecar components.
+	proxyFields := []string{"kuberbacproxy", "oauthproxy", "authorino"}
+	for _, pf := range proxyFields {
+		if strings.Contains(lower, pf) {
+			return "proxy"
+		}
+	}
+
+	return "other"
+}
+
 func detectPermissiveDefaults(result *types.AnalysisResult) []types.Contradiction {
 	var permissive []types.DefaultValue
 	for _, d := range result.Defaults {
@@ -87,26 +132,97 @@ func detectPermissiveDefaults(result *types.AnalysisResult) []types.Contradictio
 		}
 	}
 
-	if len(permissive) < 2 {
+	if len(permissive) == 0 {
 		return nil
 	}
 
-	var assumptions []types.Assumption
+	// Group permissive defaults by security domain.
+	domainDefaults := make(map[string][]types.DefaultValue)
 	for _, d := range permissive {
-		assumptions = append(assumptions, types.Assumption{
-			Location:    d.Location,
-			Description: d.Field + " defaults to " + d.LibraryDefault + " (" + d.PlatformMeaning + ")",
+		domain := classifyDefaultDomain(d.Field)
+		domainDefaults[domain] = append(domainDefaults[domain], d)
+	}
+
+	var contradictions []types.Contradiction
+
+	// Generate domain-specific contradictions.
+	for domain, defaults := range domainDefaults {
+		if domain == "other" {
+			continue
+		}
+
+		var assumptions []types.Assumption
+		for _, d := range defaults {
+			assumptions = append(assumptions, types.Assumption{
+				Location:    d.Location,
+				Description: d.Field + " defaults to " + d.LibraryDefault + " (" + d.PlatformMeaning + ")",
+			})
+		}
+
+		var severity, title, reality string
+		switch domain {
+		case "auth":
+			if len(defaults) >= 2 {
+				severity = "HIGH"
+				title = "Multiple authentication fields default to permissive values"
+				reality = fmt.Sprintf("%d authentication fields default to permissive values. Combined effect: any authenticated user from any domain/organization is authorized.", len(defaults))
+			} else {
+				severity = "MEDIUM"
+				title = defaults[0].Field + " defaults to permissive value"
+				reality = defaults[0].Field + " defaults to " + defaults[0].LibraryDefault + ". " + defaults[0].PlatformMeaning + "."
+			}
+		case "tls":
+			severity = "MEDIUM"
+			title = "Transport security fields default to permissive values"
+			reality = fmt.Sprintf("%d TLS/SSL fields default to insecure values. Transport layer security is weakened.", len(defaults))
+		case "proxy":
+			if len(defaults) >= 2 {
+				severity = "HIGH"
+				title = "Multiple auth proxy components are optional by default"
+				reality = fmt.Sprintf("%d auth proxy/sidecar components are absent by default. No authentication sidecar fallback exists.", len(defaults))
+			} else {
+				severity = "MEDIUM"
+				title = defaults[0].Field + " auth proxy is optional by default"
+				reality = defaults[0].Field + " is absent by default. " + defaults[0].PlatformMeaning + "."
+			}
+		case "scope":
+			severity = "MEDIUM"
+			title = "Namespace scope defaults to cluster-wide access"
+			reality = "Namespace field defaults to empty, granting cluster-wide access instead of namespace-scoped."
+		}
+
+		contradictions = append(contradictions, types.Contradiction{
+			Title:       title,
+			Assumptions: assumptions,
+			Reality:     reality,
+			Severity:    severity,
 		})
 	}
 
-	return []types.Contradiction{
-		{
-			Title:       "Multiple security-critical fields default to permissive values",
+	// Cross-domain interaction: AUTH + SCOPE = cluster-wide open access.
+	if len(domainDefaults["auth"]) > 0 && len(domainDefaults["scope"]) > 0 {
+		var assumptions []types.Assumption
+		for _, d := range domainDefaults["auth"] {
+			assumptions = append(assumptions, types.Assumption{
+				Location:    d.Location,
+				Description: d.Field + " defaults to " + d.LibraryDefault + " (" + d.PlatformMeaning + ")",
+			})
+		}
+		for _, d := range domainDefaults["scope"] {
+			assumptions = append(assumptions, types.Assumption{
+				Location:    d.Location,
+				Description: d.Field + " defaults to " + d.LibraryDefault + " (" + d.PlatformMeaning + ")",
+			})
+		}
+		contradictions = append(contradictions, types.Contradiction{
+			Title:       "Cluster-wide open access: permissive auth combined with cluster scope",
 			Assumptions: assumptions,
-			Reality:     fmt.Sprintf("%d configuration fields default to permissive values. Combined effect may create an open access path.", len(permissive)),
-			Severity:    "MEDIUM",
-		},
+			Reality:     "Authentication fields accept any user/domain AND namespace scope defaults to cluster-wide. Combined effect: any authenticated user has cluster-wide access.",
+			Severity:    "HIGH",
+		})
 	}
+
+	return contradictions
 }
 
 // functionKey produces a key identifying a function by package, name, and file
@@ -496,6 +612,84 @@ func detectOptionalFieldsWithoutValidation(result *types.AnalysisResult) []types
 				Severity:   "MEDIUM",
 				Mitigation: "Add a validation check for " + field + " in ValidateCreate/ValidateUpdate, or set a secure default in the Default() webhook.",
 			})
+		}
+	}
+
+	return contradictions
+}
+
+// authSidecarPatterns are container/sidecar name substrings that indicate
+// an authentication proxy is deployed alongside the application.
+var authSidecarPatterns = []string{
+	"rbac-proxy",
+	"oauth-proxy",
+	"authorino",
+	"envoy",
+}
+
+// detectMitigatedByDeployment checks if "no auth in code" findings are mitigated
+// by deployment context. When an ArchContext shows a sidecar with a known auth proxy
+// pattern, the corresponding contradiction is downgraded from HIGH to LOW and a
+// Mitigation note is added.
+func detectMitigatedByDeployment(contradictions []types.Contradiction, archCtx *passes.ArchContext) []types.Contradiction {
+	if archCtx == nil || len(archCtx.Deployments) == 0 {
+		return contradictions
+	}
+
+	// Build a map of deployment names to their auth sidecar names.
+	type sidecarInfo struct {
+		deploymentName string
+		sidecarName    string
+	}
+	var authSidecars []sidecarInfo
+
+	for _, dep := range archCtx.Deployments {
+		// Check both containers and sidecars for auth proxy patterns.
+		allContainers := append(dep.Containers, dep.Sidecars...)
+		for _, container := range allContainers {
+			lower := strings.ToLower(container)
+			for _, pattern := range authSidecarPatterns {
+				if strings.Contains(lower, pattern) {
+					authSidecars = append(authSidecars, sidecarInfo{
+						deploymentName: dep.Name,
+						sidecarName:    container,
+					})
+					break
+				}
+			}
+		}
+	}
+
+	if len(authSidecars) == 0 {
+		return contradictions
+	}
+
+	// Apply mitigation to auth-related contradictions.
+	for i := range contradictions {
+		c := &contradictions[i]
+
+		// Only mitigate PERMISSIVE auth / "no auth" / "no authorization" contradictions.
+		isAuthContradiction := false
+		lower := strings.ToLower(c.Title)
+		if strings.Contains(lower, "no effective authorization") ||
+			strings.Contains(lower, "no auth") ||
+			strings.Contains(lower, "permissive") {
+			isAuthContradiction = true
+		}
+		if strings.Contains(lower, "auth proxy") && strings.Contains(lower, "optional") {
+			isAuthContradiction = true
+		}
+
+		if !isAuthContradiction {
+			continue
+		}
+
+		// Use the first matching auth sidecar for the mitigation message.
+		sc := authSidecars[0]
+		c.Mitigation = fmt.Sprintf("Mitigated by %s sidecar in deployment %s", sc.sidecarName, sc.deploymentName)
+
+		if c.Severity == "HIGH" {
+			c.Severity = "LOW"
 		}
 	}
 
