@@ -57,6 +57,9 @@ func (p *Pass) runGo(ctx *passes.Context) error {
 	// Analyze webhook Default() methods for security field coverage.
 	analyzeWebhookDefaults(goSSA, modulePath, ctx.Result)
 
+	// Analyze webhook ValidateCreate/ValidateUpdate/ValidateDelete methods.
+	analyzeWebhookValidation(goSSA, modulePath, ctx.Result)
+
 	return nil
 }
 
@@ -765,6 +768,155 @@ func deriveWebhookName(fn *ssa.Function) string {
 		typeName = typeName[idx+1:]
 	}
 	return typeName + "." + fn.Name()
+}
+
+// validationMethodNames lists the webhook validator method names to scan.
+var validationMethodNames = map[string]bool{
+	"ValidateCreate": true,
+	"ValidateUpdate": true,
+	"ValidateDelete": true,
+}
+
+// analyzeWebhookValidation finds webhook ValidateCreate/ValidateUpdate/ValidateDelete
+// methods via the SSA call graph and reports which security-relevant fields they check.
+func analyzeWebhookValidation(goSSA *ir.GoSSAData, modulePath string, result *types.AnalysisResult) {
+	seen := make(map[*ssa.Function]bool)
+
+	for fn := range goSSA.CallGraph.Nodes {
+		if fn == nil || seen[fn] {
+			continue
+		}
+		seen[fn] = true
+
+		// Only look at module functions.
+		if fn.Package() == nil || !strings.HasPrefix(fn.Package().Pkg.Path(), modulePath) {
+			continue
+		}
+
+		// Must be a validation method with a receiver.
+		if !validationMethodNames[fn.Name()] || fn.Signature.Recv() == nil {
+			continue
+		}
+
+		// Filter out non-webhook validators using the same heuristic as defaulters.
+		if !looksLikeWebhookValidator(fn) {
+			continue
+		}
+
+		// Walk SSA blocks to find which security fields are accessed/checked.
+		fieldsChecked := extractCheckedFields(fn)
+
+		// Determine which security fields are checked and which are not.
+		var checked, unchecked []string
+		for _, sf := range securityFieldNames {
+			if fieldsChecked[sf] {
+				checked = append(checked, sf)
+			} else {
+				unchecked = append(unchecked, sf)
+			}
+		}
+
+		// Only report if the method has non-trivial content.
+		if len(fn.Blocks) == 0 {
+			continue
+		}
+
+		funcName := deriveWebhookName(fn)
+		file, line := loader.FunctionLocation(goSSA.Fset, fn)
+		relFile := loader.RelativePath(file, modulePath)
+
+		result.WebhookValidations = append(result.WebhookValidations, types.WebhookValidation{
+			Function:        funcName,
+			File:            relFile,
+			Line:            line,
+			FieldsChecked:   checked,
+			FieldsUnchecked: unchecked,
+		})
+	}
+
+	sort.Slice(result.WebhookValidations, func(i, j int) bool {
+		return result.WebhookValidations[i].Function < result.WebhookValidations[j].Function
+	})
+}
+
+// extractCheckedFields walks a validation function's SSA blocks and returns a
+// set of field names that are accessed via FieldAddr instructions. This covers:
+//   - Direct field access on the receiver's struct (FieldAddr instructions)
+//   - Nil checks on pointer fields (If instructions comparing to nil)
+//   - Length checks on slice fields (calls to len() followed by comparison)
+func extractCheckedFields(fn *ssa.Function) map[string]bool {
+	fields := make(map[string]bool)
+
+	if len(fn.Blocks) == 0 {
+		return fields
+	}
+
+	for _, block := range fn.Blocks {
+		for _, instr := range block.Instrs {
+			// Look for FieldAddr instructions that access struct fields.
+			fieldAddr, ok := instr.(*ssa.FieldAddr)
+			if !ok {
+				continue
+			}
+
+			structType := fieldAddr.X.Type().Underlying()
+			ptrType, isPtr := structType.(*types2.Pointer)
+			if isPtr {
+				structType = ptrType.Elem().Underlying()
+			}
+			st, isSt := structType.(*types2.Struct)
+			if !isSt {
+				continue
+			}
+
+			if fieldAddr.Field >= st.NumFields() {
+				continue
+			}
+
+			fieldName := st.Field(fieldAddr.Field).Name()
+
+			// Check if any security field name matches.
+			for _, sf := range securityFieldNames {
+				if strings.EqualFold(fieldName, sf) {
+					fields[sf] = true
+				}
+			}
+		}
+	}
+
+	return fields
+}
+
+// looksLikeWebhookValidator returns true if a ValidateCreate/ValidateUpdate/
+// ValidateDelete method is likely a webhook validator. Uses the same signals
+// as looksLikeWebhookDefaulter: parameter types and package path.
+func looksLikeWebhookValidator(fn *ssa.Function) bool {
+	sig := fn.Signature
+
+	// Check parameters for context.Context or runtime.Object.
+	params := sig.Params()
+	for i := 0; i < params.Len(); i++ {
+		paramType := params.At(i).Type().String()
+		if strings.Contains(paramType, "context.Context") ||
+			strings.Contains(paramType, "runtime.Object") {
+			return true
+		}
+	}
+
+	// Check if the receiver's package path contains webhook or API indicators.
+	recv := sig.Recv()
+	if recv != nil {
+		recvType := recv.Type().String()
+		recvType = strings.TrimPrefix(recvType, "*")
+		lower := strings.ToLower(recvType)
+		if strings.Contains(lower, "webhook") ||
+			strings.Contains(lower, "/api/") ||
+			strings.Contains(lower, "/apis/") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // looksLikeWebhookDefaulter returns true if a Default() method is likely a

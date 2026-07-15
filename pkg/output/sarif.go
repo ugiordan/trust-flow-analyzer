@@ -353,6 +353,60 @@ func WriteSARIF(w io.Writer, result *types.AnalysisResult, version string) error
 		results = append(results, r)
 	}
 
+	// 12. Webhook validations with unchecked security fields
+	for _, wv := range result.WebhookValidations {
+		if len(wv.FieldsUnchecked) == 0 {
+			continue
+		}
+		ruleID := "TFA-WEBHOOK-VALIDATION-GAP"
+		ensureRule(rules, ruleID, "Webhook validator does not check security-relevant fields")
+
+		r := SARIFResult{
+			RuleID:  ruleID,
+			Level:   "warning",
+			Message: SARIFMessage{Text: fmt.Sprintf("%s does not check: %s", wv.Function, strings.Join(wv.FieldsUnchecked, ", "))},
+			Locations: []SARIFLocation{
+				{
+					PhysicalLocation: SARIFPhysicalLocation{
+						ArtifactLocation: SARIFArtifactLocation{URI: wv.File},
+						Region:           &SARIFRegion{StartLine: wv.Line},
+					},
+				},
+			},
+			Properties: map[string]string{
+				"trust-flow-analyzer/pass":    "Webhook",
+				"trust-flow-analyzer/project": project,
+			},
+		}
+		results = append(results, r)
+	}
+
+	// 13. Posture check failures
+	for _, pc := range result.PostureChecks {
+		if pc.Status == "PASS" || pc.Status == "N/A" {
+			continue
+		}
+		ruleID := "TFA-POSTURE-" + strings.ToUpper(pc.Status)
+		ensureRule(rules, ruleID, "Security posture check: "+pc.Status)
+
+		level := "note"
+		if pc.Status == "FAIL" {
+			level = severityToLevel(pc.Severity)
+		}
+
+		r := SARIFResult{
+			RuleID:  ruleID,
+			Level:   level,
+			Message: SARIFMessage{Text: fmt.Sprintf("[%s] %s: %s", pc.Status, pc.Name, pc.Details)},
+			Properties: map[string]string{
+				"trust-flow-analyzer/pass":     "Posture",
+				"trust-flow-analyzer/project":  project,
+				"trust-flow-analyzer/category": pc.Category,
+			},
+		}
+		results = append(results, r)
+	}
+
 	// Collect unique rules in stable order (insertion order via slice).
 	var ruleSlice []SARIFRule
 	seen := make(map[string]bool)

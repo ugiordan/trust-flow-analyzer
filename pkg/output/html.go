@@ -456,6 +456,8 @@ tr:hover td { background: var(--bg-secondary); }
     <div class="summary-box"><span class="count">{{len .MeshPolicies}}</span><span class="label">Mesh Policies</span></div>
     <div class="summary-box"><span class="count">{{len .TemplateRisks}}</span><span class="label">Template Risks</span></div>
     <div class="summary-box"><span class="count">{{len .WebhookDefaults}}</span><span class="label">Webhooks</span></div>
+    <div class="summary-box"><span class="count">{{len .WebhookValidations}}</span><span class="label">Validators</span></div>
+    <div class="summary-box"><span class="count">{{len .PostureChecks}}</span><span class="label">Posture</span></div>
     <div class="summary-box"><span class="count">{{len .Contradictions}}</span><span class="label">Contradictions</span></div>
   </div>
 </header>
@@ -761,6 +763,50 @@ tr:hover td { background: var(--bg-secondary); }
       {{if .FieldsUnset}}<div class="card-detail">Does NOT set: {{join .FieldsUnset ", "}}</div>{{end}}
     </div>
     {{end}}
+  </div>
+</div>
+{{end}}
+
+{{if .WebhookValidations}}
+<div class="section collapsed" data-section="webhook-validations">
+  <div class="section-header" onclick="toggleSection(this)">
+    <h2>Webhook Validations <span class="badge">{{len .WebhookValidations}}</span></h2>
+    <span class="chevron">&#9660;</span>
+  </div>
+  <div class="section-body">
+    {{range .WebhookValidations}}
+    <div class="card" data-searchable>
+      <h3>{{.Function}} (<code>{{.File}}</code> line {{.Line}})</h3>
+      {{if .FieldsChecked}}<div class="card-detail">Checks: {{join .FieldsChecked ", "}}</div>{{end}}
+      {{if .FieldsUnchecked}}<div class="card-detail">Does NOT check: {{join .FieldsUnchecked ", "}}</div>{{end}}
+    </div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
+{{if .PostureChecks}}
+<div class="section" data-section="posture">
+  <div class="section-header" onclick="toggleSection(this)">
+    <h2>Security Posture <span class="badge">{{len .PostureChecks}}</span></h2>
+    <span class="chevron">&#9660;</span>
+  </div>
+  <div class="section-body">
+    <table>
+      <thead>
+        <tr><th>Check</th><th>Category</th><th>Status</th><th>Details</th></tr>
+      </thead>
+      <tbody>
+        {{range .PostureChecks}}
+        <tr data-searchable>
+          <td style="font-family: inherit;">{{.Name}}</td>
+          <td style="font-family: inherit;">{{.Category}}</td>
+          <td><span class="severity-badge {{if eq .Status "PASS"}}severity-low{{else if eq .Status "FAIL"}}severity-high{{else if eq .Status "PARTIAL"}}severity-medium{{else}}severity-unknown{{end}}" style="{{if eq .Status "PASS"}}background: var(--yes); color: #fff;{{end}}">{{.Status}}</span></td>
+          <td style="font-family: inherit;">{{.Details}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
   </div>
 </div>
 {{end}}

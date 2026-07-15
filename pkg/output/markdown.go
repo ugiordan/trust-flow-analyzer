@@ -67,6 +67,14 @@ func WriteMarkdown(w io.Writer, result *types.AnalysisResult) error {
 		writeWebhookDefaults(p, result.WebhookDefaults)
 	}
 
+	if len(result.WebhookValidations) > 0 {
+		writeWebhookValidations(p, result.WebhookValidations)
+	}
+
+	if len(result.PostureChecks) > 0 {
+		writePostureChecks(p, result.PostureChecks)
+	}
+
 	if len(result.Contradictions) > 0 {
 		writeContradictions(p, result.Contradictions)
 	}
@@ -289,6 +297,66 @@ func writeWebhookDefaults(p *printer, defaults []types.WebhookDefault) {
 		}
 		p.blank()
 	}
+}
+
+func writeWebhookValidations(p *printer, validations []types.WebhookValidation) {
+	p.line("## Webhook Validations")
+	p.blank()
+
+	for _, v := range validations {
+		p.line("### %s (%s line %d)", v.Function, v.File, v.Line)
+		if len(v.FieldsChecked) > 0 {
+			p.line("Checks: %s", strings.Join(v.FieldsChecked, ", "))
+		}
+		if len(v.FieldsUnchecked) > 0 {
+			p.line("Does NOT check: %s", strings.Join(v.FieldsUnchecked, ", "))
+		}
+		p.blank()
+	}
+}
+
+func writePostureChecks(p *printer, checks []types.PostureCheck) {
+	p.line("## Security Posture")
+	p.blank()
+	p.line("| Check | Status | Details |")
+	p.line("|-------|--------|---------|")
+
+	passCount := 0
+	failCount := 0
+	partialCount := 0
+	naCount := 0
+	applicable := 0
+	var score float64
+
+	for _, c := range checks {
+		p.line("| %s | %s | %s |", escapePipe(c.Name), c.Status, escapePipe(c.Details))
+		switch c.Status {
+		case "PASS":
+			passCount++
+			applicable++
+			score++
+		case "FAIL":
+			failCount++
+			applicable++
+		case "PARTIAL":
+			partialCount++
+			applicable++
+			score += 0.5
+		case "N/A":
+			naCount++
+		}
+	}
+	p.blank()
+
+	total := len(checks)
+	p.line("Overall: %d/%d PASS, %d/%d FAIL, %d/%d PARTIAL, %d/%d N/A",
+		passCount, total, failCount, total, partialCount, total, naCount, total)
+
+	if applicable > 0 {
+		pct := (score / float64(applicable)) * 100.0
+		p.line("Posture score: %.0f%%", pct)
+	}
+	p.blank()
 }
 
 func writeContradictions(p *printer, contradictions []types.Contradiction) {

@@ -205,21 +205,45 @@ type WebhookDefault struct {
 	FieldsUnset []string // security fields the defaulter does NOT set
 }
 
+// WebhookValidation describes which security-relevant fields a webhook
+// ValidateCreate/ValidateUpdate/ValidateDelete method checks. This surfaces
+// whether validators enforce invariants on optional security components.
+type WebhookValidation struct {
+	Function        string   // e.g., "ModelRegistry.ValidateCreate"
+	File            string
+	Line            int
+	FieldsChecked   []string // security fields the validator checks
+	FieldsUnchecked []string // security fields NOT checked
+}
+
+// PostureCheck represents a single item in the security posture checklist.
+// Each check evaluates whether a specific security control is present and
+// correctly configured across the analyzed project.
+type PostureCheck struct {
+	Name     string // e.g., "NetworkPolicy coverage"
+	Category string // "network", "auth", "rbac", "tls", "lifecycle"
+	Status   string // "PASS", "FAIL", "PARTIAL", "N/A"
+	Details  string // explanation
+	Severity string // severity if FAIL
+}
+
 // AnalysisResult holds the combined output of all analysis passes.
 type AnalysisResult struct {
-	Project          string
-	AuthFlows        []AuthFlow
-	Defaults         []DefaultValue
-	Contracts        []Contract
-	ErrorPaths       []ErrorPath
-	Lifecycles       []ResourceLifecycle
-	SecretExposures  []SecretExposure
-	AuthPolicies     []AuthPolicyInfo
-	RouteCoverage    []RouteCoverage
-	NetworkPolicies  []NetworkPolicyInfo
-	RBACFindings     []RBACFinding
-	MeshPolicies     []MeshPolicyInfo
-	TemplateRisks    []TemplateRisk
-	WebhookDefaults  []WebhookDefault
-	Contradictions   []Contradiction
+	Project              string
+	AuthFlows            []AuthFlow
+	Defaults             []DefaultValue
+	Contracts            []Contract
+	ErrorPaths           []ErrorPath
+	Lifecycles           []ResourceLifecycle
+	SecretExposures      []SecretExposure
+	AuthPolicies         []AuthPolicyInfo
+	RouteCoverage        []RouteCoverage
+	NetworkPolicies      []NetworkPolicyInfo
+	RBACFindings         []RBACFinding
+	MeshPolicies         []MeshPolicyInfo
+	TemplateRisks        []TemplateRisk
+	WebhookDefaults      []WebhookDefault
+	WebhookValidations   []WebhookValidation
+	PostureChecks        []PostureCheck
+	Contradictions       []Contradiction
 }

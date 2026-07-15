@@ -24,6 +24,7 @@ func Synthesize(result *types.AnalysisResult) {
 	contradictions = append(contradictions, detectWeakMTLS(result)...)
 	contradictions = append(contradictions, detectTemplateRisks(result)...)
 	contradictions = append(contradictions, detectInsecureWebhookDefaults(result)...)
+	contradictions = append(contradictions, detectOptionalFieldsWithoutValidation(result)...)
 
 	// Sort by severity (HIGH > MEDIUM > LOW) then title for stable ordering,
 	// then assign IDs so they are deterministic regardless of detection order.
@@ -452,6 +453,49 @@ func detectInsecureWebhookDefaults(result *types.AnalysisResult) []types.Contrad
 					})
 				}
 			}
+		}
+	}
+
+	return contradictions
+}
+
+// detectOptionalFieldsWithoutValidation cross-references WebhookDefaults with
+// WebhookValidations. For each field that Default() does not set (FieldsUnset),
+// check if any ValidateCreate/ValidateUpdate/ValidateDelete covers that field.
+// If the field is neither defaulted nor validated, it is truly optional with no
+// safety net, which is a MEDIUM contradiction.
+func detectOptionalFieldsWithoutValidation(result *types.AnalysisResult) []types.Contradiction {
+	// Build a set of fields checked by any validation webhook.
+	validatedFields := make(map[string]bool)
+	for _, wv := range result.WebhookValidations {
+		for _, f := range wv.FieldsChecked {
+			validatedFields[f] = true
+		}
+	}
+
+	var contradictions []types.Contradiction
+
+	for _, wd := range result.WebhookDefaults {
+		for _, field := range wd.FieldsUnset {
+			if validatedFields[field] {
+				// Default() doesn't set it, but Validate() checks it.
+				// This is enforced by webhook validation, skip the contradiction.
+				continue
+			}
+
+			// Neither defaulted nor validated. Truly optional with no safety net.
+			contradictions = append(contradictions, types.Contradiction{
+				Title: field + " is optional with no defaulting or validation",
+				Assumptions: []types.Assumption{
+					{
+						Location:    types.Location{File: wd.File, Line: wd.Line},
+						Description: wd.Function + " does not default " + field + " and no validator checks it",
+					},
+				},
+				Reality:    "Security field " + field + " is neither set by the webhook defaulter nor checked by any validation webhook. Users can deploy without this security component and no webhook will warn them.",
+				Severity:   "MEDIUM",
+				Mitigation: "Add a validation check for " + field + " in ValidateCreate/ValidateUpdate, or set a secure default in the Default() webhook.",
+			})
 		}
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/diff"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/output"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
@@ -21,6 +23,7 @@ import (
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/meshpolicy"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/netpolicy"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/rbacscope"
+	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/posture"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/secrets"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes/template"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/platform"
@@ -32,17 +35,23 @@ const usage = `trust-flow-analyzer: deterministic cross-file trust flow extracti
 
 Usage:
   trust-flow-analyzer analyze [flags] <directory>
+  trust-flow-analyzer diff [flags] <baseline.json> <current.json>
   trust-flow-analyzer version
   trust-flow-analyzer help
 
 Commands:
   analyze    Run trust flow analysis on a Go project
+  diff       Compare two analysis outputs and report changes
   version    Print version
   help       Print this help
 
 Flags for analyze:
   -output     Output file path (default: trust-flow-map.md)
   -format     Output format: markdown, json, html, sarif (default: markdown)
+  -baseline   Path to baseline JSON to diff against (outputs only new/worsened findings)
+
+Flags for diff:
+  -format     Output format: text, json, sarif (default: text)
 `
 
 var version = "dev"
@@ -56,6 +65,11 @@ func main() {
 	switch os.Args[1] {
 	case "analyze":
 		if err := runAnalyze(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	case "diff":
+		if err := runDiff(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -75,6 +89,7 @@ func runAnalyze(args []string) error {
 	outputPath := fs.String("output", "trust-flow-map.md", "output file path")
 	formatFlag := fs.String("format", "markdown", "output format")
 	archContextFlag := fs.String("arch-context", "", "path to architecture-analyzer output (optional)")
+	baselineFlag := fs.String("baseline", "", "path to baseline JSON to diff against (outputs only new/worsened findings)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -140,21 +155,23 @@ func runAnalyze(args []string) error {
 
 	plat := platform.NewKnowledge()
 	result := &types.AnalysisResult{
-		Project:          filepath.Base(absDir),
-		AuthFlows:        []types.AuthFlow{},
-		Defaults:         []types.DefaultValue{},
-		Contracts:        []types.Contract{},
-		ErrorPaths:       []types.ErrorPath{},
-		Lifecycles:       []types.ResourceLifecycle{},
-		SecretExposures:  []types.SecretExposure{},
-		AuthPolicies:     []types.AuthPolicyInfo{},
-		RouteCoverage:    []types.RouteCoverage{},
-		NetworkPolicies:  []types.NetworkPolicyInfo{},
-		RBACFindings:     []types.RBACFinding{},
-		MeshPolicies:     []types.MeshPolicyInfo{},
-		TemplateRisks:    []types.TemplateRisk{},
-		WebhookDefaults:  []types.WebhookDefault{},
-		Contradictions:   []types.Contradiction{},
+		Project:            filepath.Base(absDir),
+		AuthFlows:          []types.AuthFlow{},
+		Defaults:           []types.DefaultValue{},
+		Contracts:          []types.Contract{},
+		ErrorPaths:         []types.ErrorPath{},
+		Lifecycles:         []types.ResourceLifecycle{},
+		SecretExposures:    []types.SecretExposure{},
+		AuthPolicies:       []types.AuthPolicyInfo{},
+		RouteCoverage:      []types.RouteCoverage{},
+		NetworkPolicies:    []types.NetworkPolicyInfo{},
+		RBACFindings:       []types.RBACFinding{},
+		MeshPolicies:       []types.MeshPolicyInfo{},
+		TemplateRisks:      []types.TemplateRisk{},
+		WebhookDefaults:    []types.WebhookDefault{},
+		WebhookValidations: []types.WebhookValidation{},
+		PostureChecks:      []types.PostureCheck{},
+		Contradictions:     []types.Contradiction{},
 	}
 
 	ctx := &passes.Context{
@@ -187,6 +204,52 @@ func runAnalyze(args []string) error {
 
 	fmt.Fprintf(os.Stderr, "synthesizing contradictions...\n")
 	synthesis.Synthesize(result)
+
+	// Run posture check AFTER synthesis (it reads contradictions).
+	posturePass := &posture.Pass{}
+	fmt.Fprintf(os.Stderr, "running %s pass...\n", posturePass.Name())
+	if err := posturePass.Run(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %s pass failed: %v\n", posturePass.Name(), err)
+	}
+
+	// If --baseline is set, diff against it and output only new/worsened findings.
+	if *baselineFlag != "" {
+		baselineResult, err := loadAnalysisResult(*baselineFlag)
+		if err != nil {
+			return fmt.Errorf("loading baseline: %w", err)
+		}
+
+		diffResult := diff.Compare(baselineResult, result)
+
+		var diffBuf bytes.Buffer
+		switch *formatFlag {
+		case "json":
+			if err := diff.WriteJSON(&diffBuf, diffResult); err != nil {
+				return fmt.Errorf("writing diff JSON: %w", err)
+			}
+		case "sarif":
+			if err := diff.WriteSARIF(&diffBuf, diffResult, version); err != nil {
+				return fmt.Errorf("writing diff SARIF: %w", err)
+			}
+		default:
+			if err := diff.WriteText(&diffBuf, diffResult); err != nil {
+				return fmt.Errorf("writing diff output: %w", err)
+			}
+		}
+
+		if err := os.WriteFile(*outputPath, diffBuf.Bytes(), 0o644); err != nil {
+			return fmt.Errorf("writing diff output file: %w", err)
+		}
+
+		fmt.Fprintf(os.Stderr, "wrote diff to %s\n", *outputPath)
+		fmt.Fprintf(os.Stderr, "new: %d, removed: %d, changed: %d, unchanged: %d\n",
+			len(diffResult.New), len(diffResult.Removed), len(diffResult.Changed), diffResult.Unchanged)
+
+		if diffResult.HasNew() {
+			os.Exit(1)
+		}
+		return nil
+	}
 
 	// Write to a temp file first, then rename on success to avoid leaving a
 	// partial output file if the analysis or write fails.
@@ -262,20 +325,111 @@ func loadArchContext(path string) (*passes.ArchContext, error) {
 	return &passes.ArchContext{Components: components}, nil
 }
 
+func runDiff(args []string) error {
+	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
+	formatFlag := fs.String("format", "text", "output format: text, json, sarif")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if fs.NArg() < 2 {
+		return fmt.Errorf("diff requires two arguments: <baseline.json> <current.json>")
+	}
+
+	baselinePath := fs.Arg(0)
+	currentPath := fs.Arg(1)
+
+	baseline, err := loadAnalysisResult(baselinePath)
+	if err != nil {
+		return fmt.Errorf("loading baseline %q: %w", baselinePath, err)
+	}
+
+	current, err := loadAnalysisResult(currentPath)
+	if err != nil {
+		return fmt.Errorf("loading current %q: %w", currentPath, err)
+	}
+
+	diffResult := diff.Compare(baseline, current)
+
+	switch *formatFlag {
+	case "json":
+		if err := diff.WriteJSON(os.Stdout, diffResult); err != nil {
+			return fmt.Errorf("writing JSON: %w", err)
+		}
+	case "sarif":
+		if err := diff.WriteSARIF(os.Stdout, diffResult, version); err != nil {
+			return fmt.Errorf("writing SARIF: %w", err)
+		}
+	default:
+		if err := diff.WriteText(os.Stdout, diffResult); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+	}
+
+	if diffResult.HasNew() {
+		os.Exit(1)
+	}
+	return nil
+}
+
+// loadAnalysisResult reads and parses a trust-flow-analyzer JSON output file.
+func loadAnalysisResult(path string) (*types.AnalysisResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading file: %w", err)
+	}
+
+	var result types.AnalysisResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("parsing JSON: %w", err)
+	}
+	return &result, nil
+}
+
 func printSummary(w io.Writer, result *types.AnalysisResult) {
 	fmt.Fprintf(w, "\nsummary:\n")
-	fmt.Fprintf(w, "  auth flows:        %d\n", len(result.AuthFlows))
-	fmt.Fprintf(w, "  config defaults:   %d\n", len(result.Defaults))
-	fmt.Fprintf(w, "  contracts:         %d\n", len(result.Contracts))
-	fmt.Fprintf(w, "  error paths:       %d\n", len(result.ErrorPaths))
-	fmt.Fprintf(w, "  lifecycles:        %d\n", len(result.Lifecycles))
-	fmt.Fprintf(w, "  secret exposures:  %d\n", len(result.SecretExposures))
-	fmt.Fprintf(w, "  auth policies:     %d\n", len(result.AuthPolicies))
-	fmt.Fprintf(w, "  route coverage:    %d\n", len(result.RouteCoverage))
-	fmt.Fprintf(w, "  network policies:  %d\n", len(result.NetworkPolicies))
-	fmt.Fprintf(w, "  RBAC findings:     %d\n", len(result.RBACFindings))
-	fmt.Fprintf(w, "  mesh policies:     %d\n", len(result.MeshPolicies))
-	fmt.Fprintf(w, "  template risks:    %d\n", len(result.TemplateRisks))
-	fmt.Fprintf(w, "  webhook defaults:  %d\n", len(result.WebhookDefaults))
-	fmt.Fprintf(w, "  contradictions:    %d\n", len(result.Contradictions))
+	fmt.Fprintf(w, "  auth flows:          %d\n", len(result.AuthFlows))
+	fmt.Fprintf(w, "  config defaults:     %d\n", len(result.Defaults))
+	fmt.Fprintf(w, "  contracts:           %d\n", len(result.Contracts))
+	fmt.Fprintf(w, "  error paths:         %d\n", len(result.ErrorPaths))
+	fmt.Fprintf(w, "  lifecycles:          %d\n", len(result.Lifecycles))
+	fmt.Fprintf(w, "  secret exposures:    %d\n", len(result.SecretExposures))
+	fmt.Fprintf(w, "  auth policies:       %d\n", len(result.AuthPolicies))
+	fmt.Fprintf(w, "  route coverage:      %d\n", len(result.RouteCoverage))
+	fmt.Fprintf(w, "  network policies:    %d\n", len(result.NetworkPolicies))
+	fmt.Fprintf(w, "  RBAC findings:       %d\n", len(result.RBACFindings))
+	fmt.Fprintf(w, "  mesh policies:       %d\n", len(result.MeshPolicies))
+	fmt.Fprintf(w, "  template risks:      %d\n", len(result.TemplateRisks))
+	fmt.Fprintf(w, "  webhook defaults:    %d\n", len(result.WebhookDefaults))
+	fmt.Fprintf(w, "  webhook validations: %d\n", len(result.WebhookValidations))
+	fmt.Fprintf(w, "  posture checks:      %d\n", len(result.PostureChecks))
+	fmt.Fprintf(w, "  contradictions:      %d\n", len(result.Contradictions))
+
+	if len(result.PostureChecks) > 0 {
+		score := postureScore(result.PostureChecks)
+		fmt.Fprintf(w, "  posture score:       %.0f%%\n", score)
+	}
+}
+
+func postureScore(checks []types.PostureCheck) float64 {
+	var total, score float64
+	for _, c := range checks {
+		switch c.Status {
+		case "N/A":
+			continue
+		case "PASS":
+			total++
+			score++
+		case "PARTIAL":
+			total++
+			score += 0.5
+		case "FAIL":
+			total++
+		}
+	}
+	if total == 0 {
+		return 100.0
+	}
+	return (score / total) * 100.0
 }
