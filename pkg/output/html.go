@@ -22,12 +22,14 @@ func htmlFuncMap() template.FuncMap {
 	return template.FuncMap{
 		"severityClass": func(s string) string {
 			switch strings.ToUpper(s) {
-			case "HIGH":
+			case "HIGH", "PERMISSIVE":
 				return "severity-high"
 			case "MEDIUM":
 				return "severity-medium"
-			case "LOW":
+			case "LOW", "RESTRICTIVE":
 				return "severity-low"
+			case "NEUTRAL":
+				return "severity-unknown"
 			default:
 				return "severity-unknown"
 			}
