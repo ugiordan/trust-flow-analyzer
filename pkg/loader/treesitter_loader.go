@@ -13,6 +13,12 @@ import (
 )
 
 // skipDirs is the set of directory names to skip during tree-sitter file walks.
+//
+// NOTE: this is a package-level mutable map. AddSkipDirs mutates it globally,
+// which is fine for the CLI (single invocation per process) but would be unsafe
+// for concurrent library usage. If trust-flow-analyzer is ever embedded as a
+// library, skipDirs should be moved into a per-invocation context or protected
+// with a sync.RWMutex.
 var skipDirs = map[string]bool{
 	".git":         true,
 	"__pycache__":  true,

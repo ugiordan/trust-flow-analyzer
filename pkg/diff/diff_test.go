@@ -265,13 +265,13 @@ func TestFlatten(t *testing.T) {
 	findings := Flatten(result)
 
 	// Count expected findings:
-	// 1 contradiction + 1 permissive authflow + 1 contract violation +
-	// 1 dropped error + 1 uncovered route + 1 secret + 1 orphanable lifecycle +
-	// 1 webhook = 8
-	// Note: rbac, template, and mtls raw findings are skipped when contradictions
-	// exist because they are already represented as contradictions (no double-counting).
-	if len(findings) != 8 {
-		t.Errorf("flatten produced %d findings, want 8", len(findings))
+	// 1 contradiction + 1 contract violation + 1 dropped error +
+	// 1 secret + 1 orphanable lifecycle + 1 webhook = 6
+	// Note: rbac, template, mtls, authflow, and route raw findings are skipped
+	// when contradictions exist because they are already represented as
+	// contradictions (no double-counting).
+	if len(findings) != 6 {
+		t.Errorf("flatten produced %d findings, want 6", len(findings))
 		for i, f := range findings {
 			t.Logf("  [%d] %s: %s (key=%s)", i, f.Category, f.Summary, f.Key)
 		}
@@ -285,10 +285,8 @@ func TestFlatten(t *testing.T) {
 
 	expected := map[string]int{
 		"contradiction": 1,
-		"authflow":      1,
 		"contract":      1,
 		"error":         1,
-		"route":         1,
 		"secret":        1,
 		"lifecycle":     1,
 		"webhook":       1,
@@ -300,8 +298,9 @@ func TestFlatten(t *testing.T) {
 		}
 	}
 
-	// Verify rbac, template, mtls are correctly skipped when contradictions exist.
-	for _, cat := range []string{"rbac", "template", "mtls"} {
+	// Verify rbac, template, mtls, authflow, and route are correctly skipped
+	// when contradictions exist (already represented as contradictions).
+	for _, cat := range []string{"rbac", "template", "mtls", "authflow", "route"} {
 		if categories[cat] != 0 {
 			t.Errorf("category %q: got %d findings, want 0 (should be skipped when contradictions exist)", cat, categories[cat])
 		}

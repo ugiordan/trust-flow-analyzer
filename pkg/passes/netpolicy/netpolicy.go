@@ -107,7 +107,8 @@ func parseYAMLFile(path, relPath string) []types.NetworkPolicyInfo {
 			if err == io.EOF {
 				break
 			}
-			break
+			// Skip malformed documents and continue to the next one.
+			continue
 		}
 		if doc == nil {
 			continue

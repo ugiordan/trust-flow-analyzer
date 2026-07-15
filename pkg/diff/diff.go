@@ -119,19 +119,23 @@ func Flatten(result *types.AnalysisResult) []DiffFinding {
 		})
 	}
 
-	// Auth flows (only PERMISSIVE posture is a finding)
-	for _, af := range result.AuthFlows {
-		if af.Posture != "PERMISSIVE" {
-			continue
+	// Auth flows (only PERMISSIVE posture is a finding).
+	// Skip when contradictions exist: PERMISSIVE auth flows are already
+	// represented as contradictions by the synthesis pass.
+	if !hasContradictions {
+		for _, af := range result.AuthFlows {
+			if af.Posture != "PERMISSIVE" {
+				continue
+			}
+			findings = append(findings, DiffFinding{
+				Category: "authflow",
+				Key:      fmt.Sprintf("authflow:%s", af.Name),
+				Summary:  fmt.Sprintf("Auth flow %q has PERMISSIVE posture", af.Name),
+				Severity: "MEDIUM",
+				File:     af.Entry.File,
+				Line:     af.Entry.Line,
+			})
 		}
-		findings = append(findings, DiffFinding{
-			Category: "authflow",
-			Key:      fmt.Sprintf("authflow:%s", af.Name),
-			Summary:  fmt.Sprintf("Auth flow %q has PERMISSIVE posture", af.Name),
-			Severity: "MEDIUM",
-			File:     af.Entry.File,
-			Line:     af.Entry.Line,
-		})
 	}
 
 	// Contract violations
@@ -190,18 +194,20 @@ func Flatten(result *types.AnalysisResult) []DiffFinding {
 		}
 	}
 
-	// Uncovered routes
-	for _, rc := range result.RouteCoverage {
-		if rc.Covered || strings.EqualFold(rc.Mechanism, "INTENTIONAL") {
-			continue
+	// Uncovered routes: skip when contradictions exist (already represented there).
+	if !hasContradictions {
+		for _, rc := range result.RouteCoverage {
+			if rc.Covered || strings.EqualFold(rc.Mechanism, "INTENTIONAL") {
+				continue
+			}
+			findings = append(findings, DiffFinding{
+				Category: "route",
+				Key:      fmt.Sprintf("route:%s", rc.Route),
+				Summary:  fmt.Sprintf("Route %s (%s) has no auth policy coverage", rc.Route, rc.RouteKind),
+				Severity: "MEDIUM",
+				File:     rc.RouteFile,
+			})
 		}
-		findings = append(findings, DiffFinding{
-			Category: "route",
-			Key:      fmt.Sprintf("route:%s", rc.Route),
-			Summary:  fmt.Sprintf("Route %s (%s) has no auth policy coverage", rc.Route, rc.RouteKind),
-			Severity: "MEDIUM",
-			File:     rc.RouteFile,
-		})
 	}
 
 	// Weak mTLS policies: skip when contradictions exist (already represented there).

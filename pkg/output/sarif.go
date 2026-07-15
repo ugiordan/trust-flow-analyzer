@@ -209,18 +209,20 @@ func WriteSARIF(w io.Writer, result *types.AnalysisResult, version string) error
 		level := severityToLevel(tr.Severity)
 		ensureRule(rules, ruleID, "Template risk: "+tr.Kind)
 
+		loc := SARIFLocation{
+			PhysicalLocation: SARIFPhysicalLocation{
+				ArtifactLocation: SARIFArtifactLocation{URI: tr.File},
+			},
+		}
+		if tr.Line > 0 {
+			loc.PhysicalLocation.Region = &SARIFRegion{StartLine: tr.Line}
+		}
+
 		r := SARIFResult{
 			RuleID:  ruleID,
 			Level:   level,
 			Message: SARIFMessage{Text: tr.Description},
-			Locations: []SARIFLocation{
-				{
-					PhysicalLocation: SARIFPhysicalLocation{
-						ArtifactLocation: SARIFArtifactLocation{URI: tr.File},
-						Region:           &SARIFRegion{StartLine: tr.Line},
-					},
-				},
-			},
+			Locations: []SARIFLocation{loc},
 			Properties: map[string]string{
 				"trust-flow-analyzer/pass":    "Template",
 				"trust-flow-analyzer/project": project,
@@ -333,18 +335,20 @@ func WriteSARIF(w io.Writer, result *types.AnalysisResult, version string) error
 		ruleID := "TFA-WEBHOOK-UNSET"
 		ensureRule(rules, ruleID, "Webhook defaulter does not set security-relevant fields")
 
+		wdLoc := SARIFLocation{
+			PhysicalLocation: SARIFPhysicalLocation{
+				ArtifactLocation: SARIFArtifactLocation{URI: wd.File},
+			},
+		}
+		if wd.Line > 0 {
+			wdLoc.PhysicalLocation.Region = &SARIFRegion{StartLine: wd.Line}
+		}
+
 		r := SARIFResult{
 			RuleID:  ruleID,
 			Level:   "warning",
 			Message: SARIFMessage{Text: fmt.Sprintf("%s does not set: %s", wd.Function, strings.Join(wd.FieldsUnset, ", "))},
-			Locations: []SARIFLocation{
-				{
-					PhysicalLocation: SARIFPhysicalLocation{
-						ArtifactLocation: SARIFArtifactLocation{URI: wd.File},
-						Region:           &SARIFRegion{StartLine: wd.Line},
-					},
-				},
-			},
+			Locations: []SARIFLocation{wdLoc},
 			Properties: map[string]string{
 				"trust-flow-analyzer/pass":    "Webhook",
 				"trust-flow-analyzer/project": project,
@@ -361,18 +365,20 @@ func WriteSARIF(w io.Writer, result *types.AnalysisResult, version string) error
 		ruleID := "TFA-WEBHOOK-VALIDATION-GAP"
 		ensureRule(rules, ruleID, "Webhook validator does not check security-relevant fields")
 
+		wvLoc := SARIFLocation{
+			PhysicalLocation: SARIFPhysicalLocation{
+				ArtifactLocation: SARIFArtifactLocation{URI: wv.File},
+			},
+		}
+		if wv.Line > 0 {
+			wvLoc.PhysicalLocation.Region = &SARIFRegion{StartLine: wv.Line}
+		}
+
 		r := SARIFResult{
 			RuleID:  ruleID,
 			Level:   "warning",
 			Message: SARIFMessage{Text: fmt.Sprintf("%s does not check: %s", wv.Function, strings.Join(wv.FieldsUnchecked, ", "))},
-			Locations: []SARIFLocation{
-				{
-					PhysicalLocation: SARIFPhysicalLocation{
-						ArtifactLocation: SARIFArtifactLocation{URI: wv.File},
-						Region:           &SARIFRegion{StartLine: wv.Line},
-					},
-				},
-			},
+			Locations: []SARIFLocation{wvLoc},
 			Properties: map[string]string{
 				"trust-flow-analyzer/pass":    "Webhook",
 				"trust-flow-analyzer/project": project,

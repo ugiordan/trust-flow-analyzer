@@ -141,8 +141,8 @@ func parseYAMLFile(path, relPath string) ([]types.AuthPolicyInfo, []routeInfo, [
 			if err == io.EOF {
 				break
 			}
-			// Skip malformed documents.
-			break
+			// Skip malformed documents and continue to the next one.
+			continue
 		}
 		if doc == nil {
 			continue
