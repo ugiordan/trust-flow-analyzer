@@ -27,16 +27,18 @@ type Pass struct{}
 func (p *Pass) Name() string { return "defaults" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
-	// Merge custom security fields from user config.
+	// Build a local copy of security fields to avoid mutating the global slice.
+	localSecurityFields := make([]string, len(securityFieldNames))
+	copy(localSecurityFields, securityFieldNames)
 	if ctx.CustomConfig != nil {
 		for _, sf := range ctx.CustomConfig.SecurityFields {
-			securityFieldNames = append(securityFieldNames, sf)
+			localSecurityFields = append(localSecurityFields, sf)
 		}
 	}
 
 	var err error
 	if ctx.Program.GoSSA != nil {
-		err = p.runGo(ctx)
+		err = p.runGo(ctx, localSecurityFields)
 	} else {
 		err = p.runGeneric(ctx)
 	}
@@ -47,7 +49,7 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	return nil
 }
 
-func (p *Pass) runGo(ctx *passes.Context) error {
+func (p *Pass) runGo(ctx *passes.Context, secFields []string) error {
 	goSSA := ctx.Program.GoSSA
 	modulePath := ctx.Program.ModulePath
 
@@ -62,10 +64,10 @@ func (p *Pass) runGo(ctx *passes.Context) error {
 	})
 
 	// Analyze webhook Default() methods for security field coverage.
-	analyzeWebhookDefaults(goSSA, modulePath, ctx.Result)
+	analyzeWebhookDefaults(goSSA, modulePath, ctx.Result, secFields)
 
 	// Analyze webhook ValidateCreate/ValidateUpdate/ValidateDelete methods.
-	analyzeWebhookValidation(goSSA, modulePath, ctx.Result)
+	analyzeWebhookValidation(goSSA, modulePath, ctx.Result, secFields)
 
 	return nil
 }
@@ -654,7 +656,7 @@ var securityFieldNames = []string{
 
 // analyzeWebhookDefaults finds webhook Default() methods via the SSA call graph
 // and reports which security-relevant fields they set (or don't set).
-func analyzeWebhookDefaults(goSSA *ir.GoSSAData, modulePath string, result *types.AnalysisResult) {
+func analyzeWebhookDefaults(goSSA *ir.GoSSAData, modulePath string, result *types.AnalysisResult, secFields []string) {
 	seen := make(map[*ssa.Function]bool)
 
 	for fn := range goSSA.CallGraph.Nodes {
@@ -686,7 +688,7 @@ func analyzeWebhookDefaults(goSSA *ir.GoSSAData, modulePath string, result *type
 
 		// Determine which security fields are set and which are not.
 		var setFields, unsetFields []string
-		for _, sf := range securityFieldNames {
+		for _, sf := range secFields {
 			if fieldsSet[sf] {
 				setFields = append(setFields, sf)
 			} else {
@@ -786,7 +788,7 @@ var validationMethodNames = map[string]bool{
 
 // analyzeWebhookValidation finds webhook ValidateCreate/ValidateUpdate/ValidateDelete
 // methods via the SSA call graph and reports which security-relevant fields they check.
-func analyzeWebhookValidation(goSSA *ir.GoSSAData, modulePath string, result *types.AnalysisResult) {
+func analyzeWebhookValidation(goSSA *ir.GoSSAData, modulePath string, result *types.AnalysisResult, secFields []string) {
 	seen := make(map[*ssa.Function]bool)
 
 	for fn := range goSSA.CallGraph.Nodes {
@@ -811,11 +813,11 @@ func analyzeWebhookValidation(goSSA *ir.GoSSAData, modulePath string, result *ty
 		}
 
 		// Walk SSA blocks to find which security fields are accessed/checked.
-		fieldsChecked := extractCheckedFields(fn)
+		fieldsChecked := extractCheckedFields(fn, secFields)
 
 		// Determine which security fields are checked and which are not.
 		var checked, unchecked []string
-		for _, sf := range securityFieldNames {
+		for _, sf := range secFields {
 			if fieldsChecked[sf] {
 				checked = append(checked, sf)
 			} else {
@@ -851,7 +853,7 @@ func analyzeWebhookValidation(goSSA *ir.GoSSAData, modulePath string, result *ty
 //   - Direct field access on the receiver's struct (FieldAddr instructions)
 //   - Nil checks on pointer fields (If instructions comparing to nil)
 //   - Length checks on slice fields (calls to len() followed by comparison)
-func extractCheckedFields(fn *ssa.Function) map[string]bool {
+func extractCheckedFields(fn *ssa.Function, secFields []string) map[string]bool {
 	fields := make(map[string]bool)
 
 	if len(fn.Blocks) == 0 {
@@ -883,7 +885,7 @@ func extractCheckedFields(fn *ssa.Function) map[string]bool {
 			fieldName := st.Field(fieldAddr.Field).Name()
 
 			// Check if any security field name matches.
-			for _, sf := range securityFieldNames {
+			for _, sf := range secFields {
 				if strings.EqualFold(fieldName, sf) {
 					fields[sf] = true
 				}

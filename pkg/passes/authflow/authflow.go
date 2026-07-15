@@ -81,15 +81,19 @@ var patterns = []authPattern{
 }
 
 // Pass implements the auth flow analysis.
-type Pass struct{}
+type Pass struct {
+	activePatterns []authPattern
+}
 
 func (p *Pass) Name() string { return "authflow" }
 
 func (p *Pass) Run(ctx *passes.Context) error {
-	// Merge custom auth patterns from user config.
+	// Build a local copy of patterns to avoid mutating the global slice.
+	p.activePatterns = make([]authPattern, len(patterns))
+	copy(p.activePatterns, patterns)
 	if ctx.CustomConfig != nil {
 		for _, ap := range ctx.CustomConfig.AuthPatterns {
-			patterns = append(patterns, authPattern{
+			p.activePatterns = append(p.activePatterns, authPattern{
 				substring: ap.Name,
 				kind:      ap.Kind,
 			})
@@ -106,7 +110,7 @@ func (p *Pass) runGo(ctx *passes.Context) error {
 	goSSA := ctx.Program.GoSSA
 	modulePath := ctx.Program.ModulePath
 
-	authFuncs := findAuthFunctions(goSSA, modulePath)
+	authFuncs := findAuthFunctions(goSSA, modulePath, p.activePatterns)
 	entries := findEntryPoints(goSSA, modulePath)
 
 	if len(entries) == 0 || len(authFuncs) == 0 {
@@ -153,7 +157,7 @@ func (p *Pass) runGeneric(ctx *passes.Context) error {
 	}
 	var authFuncs []genericClassified
 	for _, fn := range prog.Functions {
-		for _, pat := range patterns {
+		for _, pat := range p.activePatterns {
 			if strings.Contains(fn.Name, pat.substring) {
 				authFuncs = append(authFuncs, genericClassified{fn: fn, kind: pat.kind})
 				break
@@ -332,7 +336,7 @@ type classifiedFunc struct {
 	kind string
 }
 
-func findAuthFunctions(goSSA *ir.GoSSAData, modulePath string) []classifiedFunc {
+func findAuthFunctions(goSSA *ir.GoSSAData, modulePath string, pats []authPattern) []classifiedFunc {
 	var result []classifiedFunc
 	seen := make(map[*ssa.Function]bool)
 
@@ -343,9 +347,9 @@ func findAuthFunctions(goSSA *ir.GoSSAData, modulePath string) []classifiedFunc 
 		seen[fn] = true
 
 		name := fn.Name()
-		for _, p := range patterns {
-			if strings.Contains(name, p.substring) {
-				result = append(result, classifiedFunc{fn: fn, kind: p.kind})
+		for _, pat := range pats {
+			if strings.Contains(name, pat.substring) {
+				result = append(result, classifiedFunc{fn: fn, kind: pat.kind})
 				break
 			}
 		}
