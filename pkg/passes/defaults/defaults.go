@@ -2,6 +2,7 @@ package defaults
 
 import (
 	"bufio"
+	"fmt"
 	"go/ast"
 	"go/token"
 	types2 "go/types"
@@ -45,7 +46,9 @@ func (p *Pass) Run(ctx *passes.Context) error {
 	if err != nil {
 		return err
 	}
-	scanParamsEnvFiles(ctx)
+	if err := scanParamsEnvFiles(ctx); err != nil {
+		return fmt.Errorf("scanning params.env files: %w", err)
+	}
 	return nil
 }
 
@@ -528,19 +531,18 @@ var securityEnvKeys = []string{
 
 // scanParamsEnvFiles walks the project for params.env files (kustomize overlays)
 // and flags empty values on security-critical keys as PERMISSIVE defaults.
-func scanParamsEnvFiles(ctx *passes.Context) {
+func scanParamsEnvFiles(ctx *passes.Context) error {
 	rootDir := ctx.Program.RootDir
 	if rootDir == "" {
-		return
+		return nil
 	}
 
-	filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
+	return filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
 		if info.IsDir() {
-			name := info.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" {
+			if loader.ShouldSkipDir(info.Name()) {
 				return filepath.SkipDir
 			}
 			return nil

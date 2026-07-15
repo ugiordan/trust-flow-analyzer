@@ -155,17 +155,20 @@ func TestDetectMitigatedByDeployment(t *testing.T) {
 		t.Fatal("expected at least one contradiction")
 	}
 
-	// The auth contradiction should be downgraded to LOW.
+	// The auth contradiction should be downgraded to MEDIUM (partial mitigation).
 	for _, c := range result.Contradictions {
 		if strings.Contains(c.Title, "no effective authorization") {
-			if c.Severity != "LOW" {
-				t.Errorf("expected LOW severity after mitigation, got %s", c.Severity)
+			if c.Severity != "MEDIUM" {
+				t.Errorf("expected MEDIUM severity after partial mitigation, got %s", c.Severity)
 			}
 			if !strings.Contains(c.Mitigation, "kube-rbac-proxy") {
 				t.Errorf("expected mitigation to mention kube-rbac-proxy, got %q", c.Mitigation)
 			}
 			if !strings.Contains(c.Mitigation, "my-service") {
 				t.Errorf("expected mitigation to mention deployment name, got %q", c.Mitigation)
+			}
+			if !strings.Contains(c.Mitigation, "Partially mitigated") {
+				t.Errorf("expected mitigation to note partial nature, got %q", c.Mitigation)
 			}
 		}
 	}
@@ -263,8 +266,8 @@ func TestDetectMitigatedByDeploymentOAuthProxy(t *testing.T) {
 
 	for _, c := range result.Contradictions {
 		if strings.Contains(c.Title, "no effective authorization") {
-			if c.Severity != "LOW" {
-				t.Errorf("expected LOW severity after oauth-proxy mitigation, got %s", c.Severity)
+			if c.Severity != "MEDIUM" {
+				t.Errorf("expected MEDIUM severity after partial oauth-proxy mitigation, got %s", c.Severity)
 			}
 			if !strings.Contains(c.Mitigation, "oauth-proxy") {
 				t.Errorf("expected mitigation to mention oauth-proxy, got %q", c.Mitigation)

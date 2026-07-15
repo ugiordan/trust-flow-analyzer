@@ -40,6 +40,24 @@ func AddSkipDirs(dirs []string) {
 	}
 }
 
+// ShouldSkipDir returns true if the given directory name is in the skip set.
+// Passes that walk the filesystem should use this instead of maintaining their
+// own copy of the skip list.
+func ShouldSkipDir(name string) bool {
+	return skipDirs[name]
+}
+
+// SkipDirsCopy returns a copy of the current skip dirs set. This is used to
+// populate passes.Context.SkipDirs so passes can merge custom dirs without
+// importing the loader package.
+func SkipDirsCopy() map[string]bool {
+	cp := make(map[string]bool, len(skipDirs))
+	for k, v := range skipDirs {
+		cp[k] = v
+	}
+	return cp
+}
+
 // LoadTreeSitter loads a non-Go project via tree-sitter parsing and returns an
 // ir.AnalysisProgram with heuristic call graph data. GoSSA is nil.
 func LoadTreeSitter(dir string, lang string, stderr io.Writer) (*ir.AnalysisProgram, error) {

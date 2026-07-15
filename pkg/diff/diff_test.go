@@ -32,8 +32,10 @@ func TestCompareIdentical(t *testing.T) {
 	if len(d.Changed) != 0 {
 		t.Errorf("changed = %d, want 0", len(d.Changed))
 	}
-	if d.Unchanged != 2 {
-		t.Errorf("unchanged = %d, want 2", d.Unchanged)
+	// Only 1 unchanged: the contradiction. RBAC findings are skipped when
+	// contradictions exist to avoid double-counting.
+	if d.Unchanged != 1 {
+		t.Errorf("unchanged = %d, want 1", d.Unchanged)
 	}
 	if d.HasNew() {
 		t.Error("HasNew() = true, want false for identical results")
@@ -264,10 +266,12 @@ func TestFlatten(t *testing.T) {
 
 	// Count expected findings:
 	// 1 contradiction + 1 permissive authflow + 1 contract violation +
-	// 1 dropped error + 1 rbac + 1 template + 1 uncovered route +
-	// 1 weak mtls + 1 secret + 1 orphanable lifecycle + 1 webhook = 11
-	if len(findings) != 11 {
-		t.Errorf("flatten produced %d findings, want 11", len(findings))
+	// 1 dropped error + 1 uncovered route + 1 secret + 1 orphanable lifecycle +
+	// 1 webhook = 8
+	// Note: rbac, template, and mtls raw findings are skipped when contradictions
+	// exist because they are already represented as contradictions (no double-counting).
+	if len(findings) != 8 {
+		t.Errorf("flatten produced %d findings, want 8", len(findings))
 		for i, f := range findings {
 			t.Logf("  [%d] %s: %s (key=%s)", i, f.Category, f.Summary, f.Key)
 		}
@@ -284,10 +288,7 @@ func TestFlatten(t *testing.T) {
 		"authflow":      1,
 		"contract":      1,
 		"error":         1,
-		"rbac":          1,
-		"template":      1,
 		"route":         1,
-		"mtls":          1,
 		"secret":        1,
 		"lifecycle":     1,
 		"webhook":       1,
@@ -296,6 +297,13 @@ func TestFlatten(t *testing.T) {
 	for cat, count := range expected {
 		if categories[cat] != count {
 			t.Errorf("category %q: got %d findings, want %d", cat, categories[cat], count)
+		}
+	}
+
+	// Verify rbac, template, mtls are correctly skipped when contradictions exist.
+	for _, cat := range []string{"rbac", "template", "mtls"} {
+		if categories[cat] != 0 {
+			t.Errorf("category %q: got %d findings, want 0 (should be skipped when contradictions exist)", cat, categories[cat])
 		}
 	}
 }

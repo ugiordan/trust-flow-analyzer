@@ -77,7 +77,8 @@ type Context struct {
 	Platform     *platform.Knowledge
 	Result       *types.AnalysisResult
 	ArchContext  *ArchContext
-	CustomConfig *config.Config // optional user-provided custom rules
+	CustomConfig *config.Config   // optional user-provided custom rules
+	SkipDirs     map[string]bool  // merged skip dirs (loader defaults + custom config)
 }
 
 // Pass is the interface that all analysis passes implement.

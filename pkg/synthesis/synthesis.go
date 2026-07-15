@@ -355,10 +355,18 @@ func detectMissingNetworkPolicies(result *types.AnalysisResult) []types.Contradi
 		return nil
 	}
 
+	// If any NetworkPolicy has an empty podSelector (selects all pods in the
+	// namespace), then all backends are covered by definition.
+	for _, np := range result.NetworkPolicies {
+		if np.PodSelector == "(all pods)" {
+			return nil
+		}
+	}
+
 	// Build a set of pod selector labels from all NetworkPolicies.
 	coveredSelectors := make(map[string]bool)
 	for _, np := range result.NetworkPolicies {
-		if np.PodSelector != "" && np.PodSelector != "(all pods)" {
+		if np.PodSelector != "" {
 			coveredSelectors[np.PodSelector] = true
 		}
 	}
@@ -645,7 +653,10 @@ func detectMitigatedByDeployment(contradictions []types.Contradiction, archCtx *
 
 	for _, dep := range archCtx.Deployments {
 		// Check both containers and sidecars for auth proxy patterns.
-		allContainers := append(dep.Containers, dep.Sidecars...)
+		// Allocate explicitly to avoid mutating dep.Containers' backing array.
+		allContainers := make([]string, 0, len(dep.Containers)+len(dep.Sidecars))
+		allContainers = append(allContainers, dep.Containers...)
+		allContainers = append(allContainers, dep.Sidecars...)
 		for _, container := range allContainers {
 			lower := strings.ToLower(container)
 			for _, pattern := range authSidecarPatterns {
@@ -685,11 +696,14 @@ func detectMitigatedByDeployment(contradictions []types.Contradiction, archCtx *
 		}
 
 		// Use the first matching auth sidecar for the mitigation message.
+		// Per-deployment matching is not performed, so this is a partial
+		// mitigation: the sidecar exists somewhere but may not protect every
+		// deployment. Downgrade to MEDIUM instead of LOW.
 		sc := authSidecars[0]
-		c.Mitigation = fmt.Sprintf("Mitigated by %s sidecar in deployment %s", sc.sidecarName, sc.deploymentName)
+		c.Mitigation = fmt.Sprintf("Partially mitigated: %s sidecar found in deployment %s (not matched per-deployment)", sc.sidecarName, sc.deploymentName)
 
 		if c.Severity == "HIGH" {
-			c.Severity = "LOW"
+			c.Severity = "MEDIUM"
 		}
 	}
 

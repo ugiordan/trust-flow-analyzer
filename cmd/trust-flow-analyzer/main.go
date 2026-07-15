@@ -213,6 +213,7 @@ func runAnalyze(args []string) error {
 		Result:       result,
 		ArchContext:  archCtx,
 		CustomConfig: userConfig,
+		SkipDirs:     loader.SkipDirsCopy(),
 	}
 
 	allPasses := []passes.Pass{

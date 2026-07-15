@@ -95,6 +95,12 @@ func Compare(baseline, current *types.AnalysisResult) *DiffResult {
 func Flatten(result *types.AnalysisResult) []DiffFinding {
 	var findings []DiffFinding
 
+	// Contradictions already subsume rbac, template, and mtls raw findings
+	// (detectRBACFindings, detectTemplateRisks, detectWeakMTLS convert them).
+	// Track which categories are represented by contradictions so we skip the
+	// raw entries below and avoid double-counting.
+	hasContradictions := len(result.Contradictions) > 0
+
 	// Contradictions
 	for _, c := range result.Contradictions {
 		file := ""
@@ -157,27 +163,31 @@ func Flatten(result *types.AnalysisResult) []DiffFinding {
 		})
 	}
 
-	// RBAC findings
-	for _, rb := range result.RBACFindings {
-		findings = append(findings, DiffFinding{
-			Category: "rbac",
-			Key:      fmt.Sprintf("rbac:%s:%s", rb.Name, rb.Rule),
-			Summary:  fmt.Sprintf("%s (%s): %s", rb.Name, rb.Rule, rb.Reason),
-			Severity: strings.ToUpper(rb.Severity),
-			File:     rb.File,
-		})
+	// RBAC findings: skip when contradictions exist (already represented there).
+	if !hasContradictions {
+		for _, rb := range result.RBACFindings {
+			findings = append(findings, DiffFinding{
+				Category: "rbac",
+				Key:      fmt.Sprintf("rbac:%s:%s", rb.Name, rb.Rule),
+				Summary:  fmt.Sprintf("%s (%s): %s", rb.Name, rb.Rule, rb.Reason),
+				Severity: strings.ToUpper(rb.Severity),
+				File:     rb.File,
+			})
+		}
 	}
 
-	// Template risks
-	for _, tr := range result.TemplateRisks {
-		findings = append(findings, DiffFinding{
-			Category: "template",
-			Key:      fmt.Sprintf("template:%s:%d:%s", tr.File, tr.Line, tr.Kind),
-			Summary:  tr.Description,
-			Severity: strings.ToUpper(tr.Severity),
-			File:     tr.File,
-			Line:     tr.Line,
-		})
+	// Template risks: skip when contradictions exist (already represented there).
+	if !hasContradictions {
+		for _, tr := range result.TemplateRisks {
+			findings = append(findings, DiffFinding{
+				Category: "template",
+				Key:      fmt.Sprintf("template:%s:%d:%s", tr.File, tr.Line, tr.Kind),
+				Summary:  tr.Description,
+				Severity: strings.ToUpper(tr.Severity),
+				File:     tr.File,
+				Line:     tr.Line,
+			})
+		}
 	}
 
 	// Uncovered routes
@@ -194,23 +204,25 @@ func Flatten(result *types.AnalysisResult) []DiffFinding {
 		})
 	}
 
-	// Weak mTLS policies
-	for _, mp := range result.MeshPolicies {
-		mode := strings.ToUpper(mp.MTLSMode)
-		if mode != "PERMISSIVE" && mode != "DISABLE" {
-			continue
+	// Weak mTLS policies: skip when contradictions exist (already represented there).
+	if !hasContradictions {
+		for _, mp := range result.MeshPolicies {
+			mode := strings.ToUpper(mp.MTLSMode)
+			if mode != "PERMISSIVE" && mode != "DISABLE" {
+				continue
+			}
+			sev := "MEDIUM"
+			if mode == "DISABLE" {
+				sev = "HIGH"
+			}
+			findings = append(findings, DiffFinding{
+				Category: "mtls",
+				Key:      fmt.Sprintf("mtls:%s:%s", mp.Name, mp.MTLSMode),
+				Summary:  fmt.Sprintf("%s (%s) has mTLS mode %s (%s)", mp.Name, mp.Kind, mp.MTLSMode, mp.Scope),
+				Severity: sev,
+				File:     mp.File,
+			})
 		}
-		sev := "MEDIUM"
-		if mode == "DISABLE" {
-			sev = "HIGH"
-		}
-		findings = append(findings, DiffFinding{
-			Category: "mtls",
-			Key:      fmt.Sprintf("mtls:%s:%s", mp.Name, mp.MTLSMode),
-			Summary:  fmt.Sprintf("%s (%s) has mTLS mode %s (%s)", mp.Name, mp.Kind, mp.MTLSMode, mp.Scope),
-			Severity: sev,
-			File:     mp.File,
-		})
 	}
 
 	// Secret exposures

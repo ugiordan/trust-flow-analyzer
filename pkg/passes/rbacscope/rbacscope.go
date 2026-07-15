@@ -10,27 +10,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/ugiordan/trust-flow-analyzer/pkg/loader"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/passes"
 	"github.com/ugiordan/trust-flow-analyzer/pkg/types"
 )
-
-// skipDirs mirrors the loader's skip set so the walk stays consistent.
-var skipDirs = map[string]bool{
-	".git":         true,
-	"__pycache__":  true,
-	"node_modules": true,
-	"venv":         true,
-	".venv":        true,
-	"target":       true,
-	"vendor":       true,
-	".tox":         true,
-	"dist":         true,
-	"build":        true,
-	"public":       true,
-	"static":       true,
-	".next":        true,
-	"coverage":     true,
-}
 
 // Pass implements the RBAC scope analysis pass.
 type Pass struct{}
@@ -154,7 +137,7 @@ func (p *Pass) runSelfExtract(ctx *passes.Context) error {
 			return nil
 		}
 		if info.IsDir() {
-			if skipDirs[info.Name()] {
+			if loader.ShouldSkipDir(info.Name()) {
 				return filepath.SkipDir
 			}
 			return nil

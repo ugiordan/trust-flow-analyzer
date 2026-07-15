@@ -218,7 +218,23 @@ func (p *Pass) runRegexFallback(ctx *passes.Context) error {
 						FailMode: "OPEN",
 					})
 					inEmptyExcept = false
-					// Re-check this line for new except/raise patterns
+					// Re-check this line for new except/raise patterns.
+					// Check raise BEFORE except so that a raise immediately
+					// after an empty except block is not swallowed.
+					if raisePattern.MatchString(line) {
+						ctx.Result.ErrorPaths = append(ctx.Result.ErrorPaths, ttypes.ErrorPath{
+							Origin: ttypes.Location{
+								File: relPath,
+								Line: lineNum,
+							},
+							Handlers: []ttypes.ErrorHandler{{
+								Location: ttypes.Location{File: relPath, Line: lineNum},
+								Kind:     "RAISE",
+							}},
+							Dropped:  false,
+							FailMode: "CLOSED",
+						})
+					}
 					if emptyExceptPattern.MatchString(line) {
 						inEmptyExcept = true
 						exceptLine = lineNum
