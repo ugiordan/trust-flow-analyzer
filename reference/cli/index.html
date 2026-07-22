@@ -18,7 +18,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -26,7 +26,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -1456,7 +1456,7 @@
 <tr>
 <td><code>-format</code></td>
 <td><code>markdown</code></td>
-<td>Output format: <code>markdown</code> or <code>json</code></td>
+<td>Output format: <code>markdown</code>, <code>json</code>, or <code>html</code></td>
 </tr>
 <tr>
 <td><code>-arch-context</code></td>
@@ -1474,6 +1474,20 @@
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># JSON output to file</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>-format<span class="w"> </span>json<span class="w"> </span>-output<span class="w"> </span>results.json<span class="w"> </span>/path/to/repo
 </code></pre></div>
+<p><strong>HTML</strong> (<code>-format html</code>): self-contained HTML report with interactive features. The output is a single file with inline CSS and JavaScript (no external dependencies). Features include:</p>
+<ul>
+<li>Dark/light theme toggle (persisted in localStorage)</li>
+<li>Collapsible sections for each analysis pass (contradictions expanded by default)</li>
+<li>Color-coded severity badges (HIGH=red, MEDIUM=orange, LOW=yellow)</li>
+<li>Summary dashboard with finding counts per pass</li>
+<li>Route coverage table with green/red/yellow coverage status</li>
+<li>Text-based auth flow path visualization</li>
+<li>Search/filter across all findings</li>
+<li>Responsive layout for mobile and desktop</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># HTML report to file</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>-format<span class="w"> </span>html<span class="w"> </span>-output<span class="w"> </span>report.html<span class="w"> </span>/path/to/repo
+</code></pre></div>
 <h3 id="architecture-context-integration">Architecture context integration<a class="headerlink" href="#architecture-context-integration" title="Permanent link">¶</a></h3>
 <p>The <code>--arch-context</code> flag accepts a path to an architecture-analyzer JSON output file. When provided, the tool uses component boundary information to:</p>
 <ul>
@@ -1481,27 +1495,27 @@
 <li>Enrich contradiction reports with component ownership</li>
 <li>Detect cross-component trust assumptions</li>
 </ul>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># First, generate architecture context</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>arch-analyzer<span class="w"> </span>scan<span class="w"> </span>/path/to/repo<span class="w"> </span>-output<span class="w"> </span>arch.json
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Then run trust-flow analysis with arch context</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>--arch-context<span class="w"> </span>arch.json<span class="w"> </span>/path/to/repo
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># First, generate architecture context</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>arch-analyzer<span class="w"> </span>scan<span class="w"> </span>/path/to/repo<span class="w"> </span>-output<span class="w"> </span>arch.json
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Then run trust-flow analysis with arch context</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>--arch-context<span class="w"> </span>arch.json<span class="w"> </span>/path/to/repo
 </code></pre></div>
 <h3 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Analyze current directory (language auto-detected)</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>.
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Analyze with custom output path</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>-output<span class="w"> </span>security-report.md<span class="w"> </span>/path/to/repo
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="c1"># Analyze a specific Go project</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>~/code/my-operator
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># Analyze a Python project with JSON output</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>-format<span class="w"> </span>json<span class="w"> </span>~/code/my-flask-app
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="c1"># Analyze with architecture context</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>--arch-context<span class="w"> </span>arch.json<span class="w"> </span>/path/to/repo
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Analyze current directory (language auto-detected)</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>.
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Analyze with custom output path</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>-output<span class="w"> </span>security-report.md<span class="w"> </span>/path/to/repo
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1"># Analyze a specific Go project</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>~/code/my-operator
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="c1"># Analyze a Python project with JSON output</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>-format<span class="w"> </span>json<span class="w"> </span>~/code/my-flask-app
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="c1"># Analyze with architecture context</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>trust-flow-analyzer<span class="w"> </span>analyze<span class="w"> </span>--arch-context<span class="w"> </span>arch.json<span class="w"> </span>/path/to/repo
 </code></pre></div>
 <h3 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">¶</a></h3>
 <table>
@@ -1524,11 +1538,11 @@
 </table>
 <h2 id="version"><code>version</code><a class="headerlink" href="#version" title="Permanent link">¶</a></h2>
 <p>Print the version string.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>trust-flow-analyzer<span class="w"> </span>version
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>trust-flow-analyzer<span class="w"> </span>version
 </code></pre></div>
 <h2 id="help"><code>help</code><a class="headerlink" href="#help" title="Permanent link">¶</a></h2>
 <p>Print usage information.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>trust-flow-analyzer<span class="w"> </span><span class="nb">help</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>trust-flow-analyzer<span class="w"> </span><span class="nb">help</span>
 </code></pre></div>
 
 
@@ -1610,7 +1624,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.top", "navigation.indexes", "navigation.instant", "navigation.path", "navigation.sections", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   
