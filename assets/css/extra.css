@@ -1,0 +1,30 @@
+/* Header logo */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 2.4rem;
+  width: auto;
+}
+
+/* Diagram wrapper */
+.diagram-wrapper {
+  overflow: hidden;
+  max-width: 100%;
+  max-height: 500px;
+  margin-bottom: 0 !important;
+  position: relative;
+}
+
+.diagram-wrapper.clipped::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: linear-gradient(transparent, var(--md-default-bg-color));
+  pointer-events: none;
+}
+
+.diagram-wrapper div.mermaid {
+  margin-bottom: 0 !important;
+}
