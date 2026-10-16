@@ -155,7 +155,7 @@ pkg/
 │   ├── rbacscope/     # RBAC ClusterRole/Binding scanning
 │   ├── meshpolicy/    # Istio/OSSM mTLS policy scanning
 │   └── template/      # Template rendering risk scanning
-├── synthesis/   # Cross-pass contradiction detection (10 rules)
+├── synthesis/   # Cross-pass contradiction detection (11 rules)
 └── output/      # Markdown and JSON output generation
 ```
 

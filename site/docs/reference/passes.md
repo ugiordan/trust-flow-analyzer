@@ -155,7 +155,7 @@ The pass walks the project for `params.env` files (commonly used in kustomize ov
 
 ## Contradiction Synthesis
 
-Runs after all passes. Detects ten types of cross-file contradictions:
+Runs after all passes. Detects eleven types of cross-file contradictions:
 
 1. **Auth without authz**: PERMISSIVE auth paths (authentication exists, authorization doesn't)
 2. **Permissive defaults**: 2+ security-critical fields defaulting to permissive values
@@ -167,5 +167,6 @@ Runs after all passes. Detects ten types of cross-file contradictions:
 8. **Weak mTLS**: mesh policies using PERMISSIVE or DISABLE mTLS mode
 9. **Template security risks**: secrets exposed in templates, conditional security sidecars
 10. **Insecure webhook defaults**: webhook defaulters that do not set security-relevant fields
+11. **Optional security fields**: security-relevant fields with neither a secure default nor a validation webhook check
 
 Contradictions are sorted by severity (HIGH > MEDIUM > LOW) then by title, and assigned stable sequential IDs.
